@@ -30,6 +30,8 @@ exporters:
   - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/exporter/fileexporter v0.142.0
   - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/exporter/loadbalancingexporter v0.142.0
   - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/exporter/otelarrowexporter v0.142.0
+  - gomod: github.com/suse/otelcol-suse-ai/topologyexporter v0.0.0
+    path: ./topologyexporter
 
 processors:
   - gomod: go.opentelemetry.io/collector/processor/batchprocessor v0.142.0

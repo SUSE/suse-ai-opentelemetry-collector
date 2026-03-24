@@ -38,11 +38,15 @@ func (a *topologyAccumulator) processTraces(td ptrace.Traces) {
 		rs := td.ResourceSpans().At(i)
 		resource := rs.Resource()
 
-		componentName, ok := resource.Attributes().Get("suse.ai.component.name")
-		if !ok {
+		// Resolve component name: prefer suse.ai.component.name, fallback to service.name
+		var appName string
+		if cn, ok := resource.Attributes().Get("suse.ai.component.name"); ok {
+			appName = cn.Str()
+		} else if sn, ok := resource.Attributes().Get("service.name"); ok {
+			appName = sn.Str()
+		} else {
 			continue
 		}
-		appName := componentName.Str()
 
 		componentType := "application"
 		if ct, ok := resource.Attributes().Get("suse.ai.component.type"); ok {
@@ -104,12 +108,14 @@ func (a *topologyAccumulator) ensureComponent(name, componentType string) string
 			ExternalID: externalID,
 			Type:       Type{Name: componentType},
 			Data: ComponentData{
-				Name:        name,
-				Layer:       layerFor(componentType),
-				Domain:      "SUSE AI",
-				Labels:      labels,
-				Identifiers: []string{externalID},
+				Name:             name,
+				Layer:            layerFor(componentType),
+				Domain:           "SUSE AI",
+				Labels:           labels,
+				Identifiers:      []string{externalID},
+				CustomProperties: make(map[string]interface{}),
 			},
+			SourceProperties: make(map[string]interface{}),
 		}
 	}
 
@@ -125,6 +131,7 @@ func (a *topologyAccumulator) ensureRelation(sourceID, targetID, relationType st
 			SourceID:   sourceID,
 			TargetID:   targetID,
 			Type:       Type{Name: relationType},
+			Data:       make(map[string]interface{}),
 		}
 	}
 }

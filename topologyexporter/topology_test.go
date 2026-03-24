@@ -35,6 +35,55 @@ func TestSkipSpanWithoutComponentName(t *testing.T) {
 	}
 }
 
+func TestFallbackToServiceName(t *testing.T) {
+	acc := newTopologyAccumulator("test-ns")
+	td := makeTraces(
+		map[string]string{"service.name": "open-webui"},
+		map[string]string{"gen_ai.provider.name": "ollama"},
+	)
+	acc.processTraces(td)
+	components, relations := acc.snapshot()
+	if len(components) != 2 {
+		t.Fatalf("expected 2 components, got %d", len(components))
+	}
+	if len(relations) != 1 {
+		t.Fatalf("expected 1 relation, got %d", len(relations))
+	}
+	// The app should be created with service.name as name and default type "application"
+	found := false
+	for _, c := range components {
+		if c.ExternalID == "suse-ai:product:application:open-webui" {
+			found = true
+			if c.Data.Layer != "Applications" {
+				t.Errorf("unexpected layer: %s", c.Data.Layer)
+			}
+		}
+	}
+	if !found {
+		t.Error("expected component with service.name fallback")
+	}
+}
+
+func TestSuseAIComponentNameTakesPrecedence(t *testing.T) {
+	acc := newTopologyAccumulator("test-ns")
+	td := makeTraces(
+		map[string]string{
+			"service.name":            "k8s-pod-name",
+			"suse.ai.component.name":  "open-webui",
+			"suse.ai.component.type":  "ui",
+		},
+		map[string]string{},
+	)
+	acc.processTraces(td)
+	components, _ := acc.snapshot()
+	if len(components) != 1 {
+		t.Fatalf("expected 1 component, got %d", len(components))
+	}
+	if components[0].ExternalID != "suse-ai:product:ui:open-webui" {
+		t.Errorf("expected suse.ai.component.name to take precedence, got %s", components[0].ExternalID)
+	}
+}
+
 func TestDiscoverAppComponent(t *testing.T) {
 	acc := newTopologyAccumulator("test-ns")
 	td := makeTraces(

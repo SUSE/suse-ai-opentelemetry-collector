@@ -66,6 +66,7 @@ require (
 	github.com/open-telemetry/opentelemetry-collector-contrib/receiver/prometheusreceiver v0.142.0
 	github.com/open-telemetry/opentelemetry-collector-contrib/receiver/receivercreator v0.142.0
 	github.com/open-telemetry/opentelemetry-collector-contrib/receiver/zipkinreceiver v0.142.0
+	github.com/suse/otelcol-suse-ai/topologyexporter v0.0.0
 	go.opentelemetry.io/collector/component v1.48.0
 	go.opentelemetry.io/collector/confmap v1.48.0
 	go.opentelemetry.io/collector/confmap/provider/envprovider v1.48.0
@@ -485,3 +486,5 @@ require (
 	sigs.k8s.io/structured-merge-diff/v6 v6.3.0 // indirect
 	sigs.k8s.io/yaml v1.6.0 // indirect
 )
+
+replace github.com/suse/otelcol-suse-ai/topologyexporter v0.0.0 => /home/thbertoldi/suse/otelcol-suse-ai/topologyexporter

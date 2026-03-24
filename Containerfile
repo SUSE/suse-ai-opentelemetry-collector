@@ -3,6 +3,7 @@ FROM dp.apps.rancher.io/containers/go:1.25.5 AS build-stage
 WORKDIR /build
 
 COPY ./builder-config.yaml builder-config.yaml
+COPY ./topologyexporter ./topologyexporter
 
 RUN --mount=type=cache,target=/root/.cache/go-build \
     GO111MODULE=on go install go.opentelemetry.io/collector/cmd/builder@v0.147.0

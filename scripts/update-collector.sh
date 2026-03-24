@@ -39,6 +39,9 @@ fi
 # Add the receiver to the manifest
 yq eval -i ".receivers += $(echo "$ES_RECEIVER" | yq eval -o=json -)" k8s_manifest.yaml
 
+# Add the topology exporter (local module)
+yq eval -i '.exporters += {"gomod": "github.com/suse/otelcol-suse-ai/topologyexporter v0.0.0", "path": "./topologyexporter"}' k8s_manifest.yaml
+
 # Replace the current builder-config.yaml
 mv k8s_manifest.yaml builder-config.yaml
 rm contrib_manifest.yaml

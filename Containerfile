@@ -5,7 +5,7 @@ WORKDIR /build
 COPY ./builder-config.yaml builder-config.yaml
 
 RUN --mount=type=cache,target=/root/.cache/go-build \
-    GO111MODULE=on go install go.opentelemetry.io/collector/cmd/builder@v0.142.0
+    GO111MODULE=on go install go.opentelemetry.io/collector/cmd/builder@v0.147.0
 
 RUN --mount=type=cache,target=/root/.cache/go-build \
     $(go env GOPATH)/bin/builder --config builder-config.yaml

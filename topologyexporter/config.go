@@ -10,7 +10,7 @@ import (
 type Config struct {
 	TLS           configtls.ClientConfig `mapstructure:"tls"`
 	Endpoint      string                 `mapstructure:"endpoint"`
-	APIKey        string                 `mapstructure:"api_key"`
+	ServiceToken  string                 `mapstructure:"service_token"`
 	InstanceType  string                 `mapstructure:"instance_type"`
 	InstanceURL   string                 `mapstructure:"instance_url"`
 	FlushInterval time.Duration          `mapstructure:"flush_interval"`
@@ -29,8 +29,8 @@ func (cfg *Config) Validate() error {
 	if cfg.Endpoint == "" {
 		return errors.New("endpoint is required")
 	}
-	if cfg.APIKey == "" {
-		return errors.New("api_key is required")
+	if cfg.ServiceToken == "" {
+		return errors.New("service_token is required")
 	}
 	if cfg.FlushInterval < 10*time.Second {
 		return errors.New("flush_interval must be >= 10s")

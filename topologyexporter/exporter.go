@@ -41,7 +41,7 @@ func (e *topologyExporter) start(ctx context.Context, host component.Host) error
 		Type: e.cfg.InstanceType,
 		URL:  e.cfg.InstanceURL,
 	}
-	e.client = newReceiverClient(e.cfg.Endpoint, e.cfg.ServiceToken, instance, httpClient)
+	e.client = newReceiverClient(e.cfg.Endpoint, e.cfg.APIKey, instance, httpClient)
 
 	go e.flushLoop()
 

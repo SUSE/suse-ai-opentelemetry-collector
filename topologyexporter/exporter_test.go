@@ -30,7 +30,7 @@ func TestExporterFullPipeline(t *testing.T) {
 
 	cfg := createDefaultConfig()
 	cfg.Endpoint = server.URL
-	cfg.APIKey = "test-key"
+	cfg.ServiceToken = "test-token"
 	cfg.FlushInterval = 100 * time.Millisecond
 	cfg.Namespace = "suse-ai"
 

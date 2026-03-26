@@ -10,17 +10,17 @@ import (
 
 func TestReceiverClientSendsCorrectPayload(t *testing.T) {
 	var receivedPayload Payload
-	var receivedToken string
+	var receivedAPIKey string
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		receivedToken = r.Header.Get("X-API-Key")
+		receivedAPIKey = r.URL.Query().Get("api_key")
 		body, _ := io.ReadAll(r.Body)
 		json.Unmarshal(body, &receivedPayload)
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer server.Close()
 
-	client := newReceiverClient(server.URL, "test-service-token", Instance{Type: "suse-ai", URL: "local"}, http.DefaultClient)
+	client := newReceiverClient(server.URL, "test-api-key", Instance{Type: "suse-ai", URL: "local"}, http.DefaultClient)
 
 	components := []Component{{
 		ExternalID: "suse-ai:product:inference-engine:ollama",
@@ -46,8 +46,8 @@ func TestReceiverClientSendsCorrectPayload(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if receivedToken != "test-service-token" {
-		t.Errorf("expected X-API-Key=test-service-token, got %s", receivedToken)
+	if receivedAPIKey != "test-api-key" {
+		t.Errorf("expected api_key=test-api-key, got %s", receivedAPIKey)
 	}
 	if len(receivedPayload.Topologies) != 1 {
 		t.Fatalf("expected 1 topology, got %d", len(receivedPayload.Topologies))
@@ -73,7 +73,7 @@ func TestReceiverClientHandlesServerError(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := newReceiverClient(server.URL, "test-token", Instance{Type: "suse-ai", URL: "local"}, http.DefaultClient)
+	client := newReceiverClient(server.URL, "test-key", Instance{Type: "suse-ai", URL: "local"}, http.DefaultClient)
 	err := client.send([]Component{}, []Relation{})
 	if err == nil {
 		t.Error("expected error for 500 response")

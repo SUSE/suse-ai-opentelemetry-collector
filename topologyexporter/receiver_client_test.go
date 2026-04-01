@@ -23,21 +23,21 @@ func TestReceiverClientSendsCorrectPayload(t *testing.T) {
 	client := newReceiverClient(server.URL, "test-api-key", Instance{Type: "suse-ai", URL: "local"}, http.DefaultClient)
 
 	components := []Component{{
-		ExternalID: "suse-ai:product:inference-engine:ollama",
+		ExternalID: "urn:suse-ai:product:inference-engine:ollama",
 		Type:       Type{Name: "inference-engine"},
 		Data: ComponentData{
 			Name:        "ollama",
 			Layer:       "Services",
 			Domain:      "SUSE AI",
 			Labels:      []string{"suse.ai.component.type:inference-engine"},
-			Identifiers: []string{"suse-ai:product:inference-engine:ollama"},
+			Identifiers: []string{"urn:suse-ai:product:inference-engine:ollama"},
 		},
 	}}
 
 	relations := []Relation{{
-		ExternalID: "suse-ai:product:ui:open-webui --> suse-ai:product:inference-engine:ollama",
-		SourceID:   "suse-ai:product:ui:open-webui",
-		TargetID:   "suse-ai:product:inference-engine:ollama",
+		ExternalID: "urn:suse-ai:product:ui:open-webui --> urn:suse-ai:product:inference-engine:ollama",
+		SourceID:   "urn:suse-ai:product:ui:open-webui",
+		TargetID:   "urn:suse-ai:product:inference-engine:ollama",
 		Type:       Type{Name: "uses"},
 	}}
 

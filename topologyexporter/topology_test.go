@@ -52,7 +52,7 @@ func TestFallbackToServiceName(t *testing.T) {
 	// The app should be created with service.name as name and default type "application"
 	found := false
 	for _, c := range components {
-		if c.ExternalID == "suse-ai:product:application:open-webui" {
+		if c.ExternalID == "urn:suse-ai:product:application:open-webui" {
 			found = true
 			if c.Data.Layer != "Applications" {
 				t.Errorf("unexpected layer: %s", c.Data.Layer)
@@ -79,7 +79,7 @@ func TestSuseAIComponentNameTakesPrecedence(t *testing.T) {
 	if len(components) != 1 {
 		t.Fatalf("expected 1 component, got %d", len(components))
 	}
-	if components[0].ExternalID != "suse-ai:product:ui:open-webui" {
+	if components[0].ExternalID != "urn:suse-ai:product:ui:open-webui" {
 		t.Errorf("expected suse.ai.component.name to take precedence, got %s", components[0].ExternalID)
 	}
 }
@@ -96,7 +96,7 @@ func TestDiscoverAppComponent(t *testing.T) {
 		t.Fatalf("expected 1 component, got %d", len(components))
 	}
 	c := components[0]
-	if c.ExternalID != "suse-ai:product:ui:my-app" {
+	if c.ExternalID != "urn:suse-ai:product:ui:my-app" {
 		t.Errorf("unexpected externalId: %s", c.ExternalID)
 	}
 	if c.Type.Name != "ui" {
@@ -118,7 +118,7 @@ func TestDefaultComponentType(t *testing.T) {
 	if len(components) != 1 {
 		t.Fatalf("expected 1 component, got %d", len(components))
 	}
-	if components[0].ExternalID != "suse-ai:product:application:my-app" {
+	if components[0].ExternalID != "urn:suse-ai:product:application:my-app" {
 		t.Errorf("unexpected externalId: %s", components[0].ExternalID)
 	}
 }
@@ -141,10 +141,10 @@ func TestDiscoverInferenceEngineAndUsesRelation(t *testing.T) {
 	if r.Type.Name != "uses" {
 		t.Errorf("unexpected relation type: %s", r.Type.Name)
 	}
-	if r.SourceID != "suse-ai:product:ui:open-webui" {
+	if r.SourceID != "urn:suse-ai:product:ui:open-webui" {
 		t.Errorf("unexpected source: %s", r.SourceID)
 	}
-	if r.TargetID != "suse-ai:product:inference-engine:ollama" {
+	if r.TargetID != "urn:suse-ai:product:inference-engine:ollama" {
 		t.Errorf("unexpected target: %s", r.TargetID)
 	}
 }
@@ -173,10 +173,10 @@ func TestDiscoverModelAndRunsRelation(t *testing.T) {
 	if runsRel == nil {
 		t.Fatal("expected a 'runs' relation")
 	}
-	if runsRel.SourceID != "suse-ai:product:inference-engine:ollama" {
+	if runsRel.SourceID != "urn:suse-ai:product:inference-engine:ollama" {
 		t.Errorf("unexpected runs source: %s", runsRel.SourceID)
 	}
-	if runsRel.TargetID != "suse-ai:product:llm-model:llama3.2" {
+	if runsRel.TargetID != "urn:suse-ai:product:llm-model:llama3.2" {
 		t.Errorf("unexpected runs target: %s", runsRel.TargetID)
 	}
 }
@@ -195,7 +195,7 @@ func TestDiscoverVectorDB(t *testing.T) {
 	if len(relations) != 1 {
 		t.Fatalf("expected 1 relation, got %d", len(relations))
 	}
-	if relations[0].TargetID != "suse-ai:product:vectordb:milvus" {
+	if relations[0].TargetID != "urn:suse-ai:product:vectordb:milvus" {
 		t.Errorf("unexpected target: %s", relations[0].TargetID)
 	}
 }
@@ -211,7 +211,7 @@ func TestDiscoverSearchEngine(t *testing.T) {
 	if len(components) != 2 {
 		t.Fatalf("expected 2 components, got %d", len(components))
 	}
-	if relations[0].TargetID != "suse-ai:product:search-engine:opensearch" {
+	if relations[0].TargetID != "urn:suse-ai:product:search-engine:opensearch" {
 		t.Errorf("unexpected target: %s", relations[0].TargetID)
 	}
 }
@@ -226,7 +226,7 @@ func TestCaseInsensitiveDBSystem(t *testing.T) {
 	components, _ := acc.snapshot()
 	found := false
 	for _, c := range components {
-		if c.ExternalID == "suse-ai:product:vectordb:milvus" {
+		if c.ExternalID == "urn:suse-ai:product:vectordb:milvus" {
 			found = true
 		}
 	}

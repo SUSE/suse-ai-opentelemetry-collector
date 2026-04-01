@@ -94,7 +94,7 @@ func (a *topologyAccumulator) processSpan(appID string, span ptrace.Span) {
 }
 
 func (a *topologyAccumulator) ensureComponent(name, componentType string) string {
-	externalID := fmt.Sprintf("suse-ai:product:%s:%s", componentType, name)
+	externalID := fmt.Sprintf("urn:suse-ai:product:%s:%s", componentType, name)
 
 	if _, exists := a.components[externalID]; !exists {
 		labels := []string{

@@ -21,9 +21,9 @@ curl -sSL "$CONTRIB_MANIFEST_URL" -o contrib_manifest.yaml
 echo "Updating builder-config.yaml..."
 # Start with k8s manifest and apply our customizations
 yq eval -i '
-  .dist.name = "otelcol-suse-ai" |
+  .dist.name = "suse-ai-opentelemetry-collector" |
   .dist.description = "Minimal OTel Collector distribution for monitoring SUSE AI" |
-  .dist.output_path = "./otelcol-suse-ai" |
+  .dist.output_path = "./suse-ai-opentelemetry-collector" |
   del(.dist.module) |
   del(.dist.version) |
   del(.dist.build_tags)
@@ -40,7 +40,7 @@ fi
 yq eval -i ".receivers += $(echo "$ES_RECEIVER" | yq eval -o=json -)" k8s_manifest.yaml
 
 # Add the topology exporter (local module)
-yq eval -i '.exporters += {"gomod": "github.com/suse/otelcol-suse-ai/topologyexporter v0.0.0", "path": "./topologyexporter"}' k8s_manifest.yaml
+yq eval -i '.exporters += {"gomod": "github.com/suse/suse-ai-opentelemetry-collector/topologyexporter v0.0.0", "path": "./topologyexporter"}' k8s_manifest.yaml
 
 # Replace the current builder-config.yaml
 mv k8s_manifest.yaml builder-config.yaml
@@ -58,6 +58,6 @@ echo "Running builder (skipping compilation)..."
 $(go env GOPATH)/bin/builder --config builder-config.yaml --skip-compilation
 
 # Clean up any leftover binary just in case
-rm -f ./otelcol-suse-ai/otelcol-suse-ai
+rm -f ./suse-ai-opentelemetry-collector/suse-ai-opentelemetry-collector
 
 echo "Update process completed successfully."

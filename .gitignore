@@ -1,8 +1,8 @@
 # Binaries
-otelcol-suse-ai/otelcol-suse-ai
-otelcol-suse-ai/otelcol-suse-ai_windows_amd64.exe
-otelcol-suse-ai/otelcol-suse-ai_darwin_amd64
-otelcol-suse-ai/otelcol-suse-ai_linux_amd64
+suse-ai-opentelemetry-collector/suse-ai-opentelemetry-collector
+suse-ai-opentelemetry-collector/suse-ai-opentelemetry-collector_windows_amd64.exe
+suse-ai-opentelemetry-collector/suse-ai-opentelemetry-collector_darwin_amd64
+suse-ai-opentelemetry-collector/suse-ai-opentelemetry-collector_linux_amd64
 
 # Go
 vendor/

@@ -15,7 +15,7 @@ SUSE AI components (Milvus, Open WebUI, vLLM, Ollama) are deployed with pre-conf
 - **Smart Filters**: The `suse_ai_filter` processes spans in real-time to calculate costs and aggregate model usage into Resource-level attributes.
 
 ### Layer 2: Intelligent Collection
-A custom OTel collector (`otelcol-suse-ai`) normalizes incoming telemetry.
+A custom OTel collector (`suse-ai-opentelemetry-collector`) normalizes incoming telemetry.
 - **Prometheus Scrapers**: Pulls deep metrics from infrastructure components (Milvus, vLLM, OpenSearch).
 - **Topology Promotion**: (Planned) The collector "promotes" the existence of logical components by emitting topology elements based on the presence of specific metrics, ensuring observability even when trace data is sparse.
 

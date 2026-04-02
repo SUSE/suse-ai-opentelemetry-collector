@@ -27,7 +27,7 @@ import (
 	fileexporter "github.com/open-telemetry/opentelemetry-collector-contrib/exporter/fileexporter"
 	loadbalancingexporter "github.com/open-telemetry/opentelemetry-collector-contrib/exporter/loadbalancingexporter"
 	otelarrowexporter "github.com/open-telemetry/opentelemetry-collector-contrib/exporter/otelarrowexporter"
-	topologyexporter "github.com/suse/otelcol-suse-ai/topologyexporter"
+	topologyexporter "github.com/suse/suse-ai-opentelemetry-collector/topologyexporter"
 	zpagesextension "go.opentelemetry.io/collector/extension/zpagesextension"
 	ackextension "github.com/open-telemetry/opentelemetry-collector-contrib/extension/ackextension"
 	basicauthextension "github.com/open-telemetry/opentelemetry-collector-contrib/extension/basicauthextension"
@@ -204,7 +204,7 @@ func components() (otelcol.Factories, error) {
 		fileexporter.NewFactory().Type(): "github.com/open-telemetry/opentelemetry-collector-contrib/exporter/fileexporter v0.147.0",
 		loadbalancingexporter.NewFactory().Type(): "github.com/open-telemetry/opentelemetry-collector-contrib/exporter/loadbalancingexporter v0.147.0",
 		otelarrowexporter.NewFactory().Type(): "github.com/open-telemetry/opentelemetry-collector-contrib/exporter/otelarrowexporter v0.147.0",
-    topologyexporter.NewFactory().Type(): "github.com/suse/otelcol-suse-ai/topologyexporter v0.0.0"
+    topologyexporter.NewFactory().Type(): "github.com/suse/suse-ai-opentelemetry-collector/topologyexporter v0.0.0"
 	})
 
 	factories.Processors, err = otelcol.MakeFactoryMap[processor.Factory](

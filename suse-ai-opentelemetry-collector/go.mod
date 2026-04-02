@@ -65,7 +65,7 @@ require (
 	github.com/open-telemetry/opentelemetry-collector-contrib/receiver/prometheusreceiver v0.147.0
 	github.com/open-telemetry/opentelemetry-collector-contrib/receiver/receivercreator v0.147.0
 	github.com/open-telemetry/opentelemetry-collector-contrib/receiver/zipkinreceiver v0.147.0
-  github.com/suse/otelcol-suse-ai/topologyexporter v0.0.0
+  github.com/suse/suse-ai-opentelemetry-collector/topologyexporter v0.0.0
 	go.opentelemetry.io/collector/component v1.53.0
 	go.opentelemetry.io/collector/confmap v1.53.0
 	go.opentelemetry.io/collector/confmap/provider/envprovider v1.53.0

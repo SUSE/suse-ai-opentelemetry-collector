@@ -1,6 +1,6 @@
 # OTel Collector Strategy - Standardized GenAI Observability
 
-The SUSE AI OTel Collector (`otelcol-suse-ai`) serves as the intelligent backbone for the observability extension. It must provide data that is 100% compatible with standard OTel backends while enabling high-level inference in SUSE Observability.
+The SUSE AI OTel Collector (`suse-ai-opentelemetry-collector`) serves as the intelligent backbone for the observability extension. It must provide data that is 100% compatible with standard OTel backends while enabling high-level inference in SUSE Observability.
 
 ## 1. Resource Attribute Promotion (Standard First)
 

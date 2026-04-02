@@ -20,7 +20,7 @@ COPY ./collector-config.yaml /otelcol/collector-config.yaml
 
 COPY --from=build-stage /var/lib/ca-certificates/ca-bundle.pem /etc/ssl/certs/ca-certificates.crt
 
-COPY --chmod=755 --from=build-stage /build/otelcol-suse-ai/otelcol-suse-ai /otelcol/otelcol-custom
+COPY --chmod=755 --from=build-stage /build/suse-ai-opentelemetry-collector/suse-ai-opentelemetry-collector /otelcol/otelcol-custom
 
 ENTRYPOINT ["/otelcol/otelcol-custom"]
 CMD ["--config", "/otelcol/collector-config.yaml"]

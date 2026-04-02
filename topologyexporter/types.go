@@ -62,7 +62,7 @@ type Payload struct {
 func NewPayload(instance Instance, components []Component, relations []Relation) *Payload {
 	return &Payload{
 		CollectionTimestamp: time.Now().Unix(),
-		InternalHostname:    "otelcol-suse-ai",
+		InternalHostname:    "suse-ai-opentelemetry-collector",
 		Topologies: []Topology{{
 			StartSnapshot: true,
 			StopSnapshot:  true,

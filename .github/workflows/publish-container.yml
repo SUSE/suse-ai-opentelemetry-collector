@@ -7,7 +7,7 @@ on:
     paths:
       - 'builder-config.yaml'
       - 'Containerfile'
-      - 'otelcol-suse-ai/**'
+      - 'suse-ai-opentelemetry-collector/**'
       - 'scripts/**'
   workflow_dispatch:
 

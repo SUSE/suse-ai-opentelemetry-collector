@@ -9,6 +9,8 @@ on:
       - 'Containerfile'
       - 'suse-ai-opentelemetry-collector/**'
       - 'scripts/**'
+  release:
+    types: [published]
   workflow_dispatch:
 
 env:
@@ -46,6 +48,8 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
             type=sha,format=short
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
 

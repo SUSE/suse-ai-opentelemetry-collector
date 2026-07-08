@@ -6,7 +6,7 @@ COPY ./builder-config.yaml builder-config.yaml
 COPY ./topologyexporter ./topologyexporter
 
 RUN --mount=type=cache,target=/root/.cache/go-build \
-    GO111MODULE=on go install go.opentelemetry.io/collector/cmd/builder@v0.153.0
+    GO111MODULE=on go install go.opentelemetry.io/collector/cmd/builder@v0.156.0
 
 RUN --mount=type=cache,target=/root/.cache/go-build \
     $(go env GOPATH)/bin/builder --config builder-config.yaml

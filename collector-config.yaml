@@ -44,11 +44,18 @@ receivers:
     collection_interval: 15s
 
 processors:
-  resourcedetection:
-    detectors: [env, system, k8s]
+  memory_limiter:
+    check_interval: 1s
+    limit_percentage: 80
+    spike_limit_percentage: 25
 
-  k8sattributes:
-    auth_type: "kubeconfig"
+  resource_detection:
+    # "k8s" is not a valid detector key; k8s pod/node metadata is added by
+    # k8s_attributes. env picks up OTEL_RESOURCE_ATTRIBUTES, system the host.
+    detectors: [env, system]
+
+  k8s_attributes:
+    auth_type: "serviceAccount"
     passthrough: false
     extract:
       metadata:
@@ -61,29 +68,33 @@ processors:
         - k8s.cronjob.name
         - k8s.job.name
         - k8s.node.name
-        - k8s.cluster.name
 
   transform:
     error_mode: ignore
     trace_statements:
       - context: span
         statements:
+          # Normalization of legacy attributes to current GenAI semantic conventions
+          - set(attributes["gen_ai.provider.name"], attributes["GenAiSystem"]) where attributes["GenAiSystem"] != nil and attributes["gen_ai.provider.name"] == nil
+          - set(attributes["gen_ai.operation.name"], attributes["GenAiOperationName"]) where attributes["GenAiOperationName"] != nil
+          - set(attributes["gen_ai.request.model"], attributes["GenAiRequestModel"]) where attributes["GenAiRequestModel"] != nil
+          # Back-fill gen_ai.provider.name from the deprecated gen_ai.system attribute
+          - set(attributes["gen_ai.provider.name"], attributes["gen_ai.system"]) where attributes["gen_ai.provider.name"] == nil and attributes["gen_ai.system"] != nil
           # Promotion of GenAI attributes to Resource level
-          - set(resource.attributes["gen_ai.system"], attributes["gen_ai.system"]) where attributes["gen_ai.system"] != nil
           - set(resource.attributes["gen_ai.provider.name"], attributes["gen_ai.provider.name"]) where attributes["gen_ai.provider.name"] != nil
           # Aggregation of models (last one wins in this context, usually sufficient per trace segment)
           - set(resource.attributes["gen_ai.models"], attributes["gen_ai.request.model"]) where attributes["gen_ai.request.model"] != nil
-          # Normalization of legacy attributes
-          - set(attributes["gen_ai.system"], attributes["GenAiSystem"]) where attributes["GenAiSystem"] != nil
-          - set(attributes["gen_ai.operation.name"], attributes["GenAiOperationName"]) where attributes["GenAiOperationName"] != nil
-          - set(attributes["gen_ai.request.model"], attributes["GenAiRequestModel"]) where attributes["GenAiRequestModel"] != nil
 
     metric_statements:
       - context: datapoint
         statements:
+          # Back-fill gen_ai.provider.name from the deprecated gen_ai.system attribute
+          - set(attributes["gen_ai.provider.name"], attributes["gen_ai.system"]) where attributes["gen_ai.provider.name"] == nil and attributes["gen_ai.system"] != nil
           # Promotion of GenAI attributes to Resource level for metrics
-          - set(resource.attributes["gen_ai.system"], attributes["gen_ai.system"]) where attributes["gen_ai.system"] != nil
-          - set(resource.attributes["db.system"], attributes["db.system"]) where attributes["db.system"] != nil
+          - set(resource.attributes["gen_ai.provider.name"], attributes["gen_ai.provider.name"]) where attributes["gen_ai.provider.name"] != nil
+          # Promotion of DB identity to Resource level (db.system.name is the current key; fall back to deprecated db.system)
+          - set(resource.attributes["db.system.name"], attributes["db.system.name"]) where attributes["db.system.name"] != nil
+          - set(resource.attributes["db.system.name"], attributes["db.system"]) where resource.attributes["db.system.name"] == nil and attributes["db.system"] != nil
           # Handle vLLM metrics (explicitly NOT renaming vllm: as requested)
 
   resource:
@@ -91,12 +102,17 @@ processors:
       - key: service.namespace
         value: "suse-ai"
         action: upsert
-      # Standardize identity
+      # Cluster identity from the deployment environment. k8sattributes cannot
+      # provide k8s.cluster.name, so it is sourced from an env var.
+      - key: k8s.cluster.name
+        value: ${env:K8S_CLUSTER_NAME}
+        action: insert
+      # Standardize identity (first non-nil source wins via insert)
       - key: suse.ai.component
-        from_attribute: gen_ai.system
+        from_attribute: gen_ai.provider.name
         action: insert
       - key: suse.ai.component
-        from_attribute: db.system
+        from_attribute: db.system.name
         action: insert
 
   batch:
@@ -105,7 +121,7 @@ processors:
 
 exporters:
   debug:
-    verbosity: detailed
+    verbosity: basic
   otlp:
     endpoint: "suse-observability-otel-collector.observability.svc.cluster.local:4317"
     tls:
@@ -115,13 +131,13 @@ service:
   pipelines:
     traces:
       receivers: [otlp]
-      processors: [resourcedetection, k8sattributes, transform, resource, batch]
+      processors: [memory_limiter, resource_detection, k8s_attributes, transform, resource, batch]
       exporters: [debug, otlp]
     metrics:
       receivers: [otlp, prometheus, elasticsearch]
-      processors: [resourcedetection, k8sattributes, transform, resource, batch]
+      processors: [memory_limiter, resource_detection, k8s_attributes, transform, resource, batch]
       exporters: [debug, otlp]
     logs:
       receivers: [otlp]
-      processors: [resourcedetection, k8sattributes, transform, resource, batch]
+      processors: [memory_limiter, resource_detection, k8s_attributes, transform, resource, batch]
       exporters: [debug, otlp]

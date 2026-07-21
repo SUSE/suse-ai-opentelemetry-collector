@@ -3,6 +3,7 @@ package topologyexporter
 import (
 	"sync"
 	"testing"
+	"time"
 
 	"go.opentelemetry.io/collector/pdata/ptrace"
 )
@@ -23,7 +24,7 @@ func makeTraces(resourceAttrs map[string]string, spanAttrs map[string]string) pt
 }
 
 func TestSkipSpanWithoutComponentName(t *testing.T) {
-	acc := newTopologyAccumulator("test-ns")
+	acc := newTopologyAccumulator("test-ns", time.Hour)
 	td := makeTraces(map[string]string{}, map[string]string{"gen_ai.provider.name": "ollama"})
 	acc.processTraces(td)
 	components, relations := acc.snapshot()
@@ -36,7 +37,7 @@ func TestSkipSpanWithoutComponentName(t *testing.T) {
 }
 
 func TestFallbackToServiceName(t *testing.T) {
-	acc := newTopologyAccumulator("test-ns")
+	acc := newTopologyAccumulator("test-ns", time.Hour)
 	td := makeTraces(
 		map[string]string{"service.name": "open-webui"},
 		map[string]string{"gen_ai.provider.name": "ollama"},
@@ -65,12 +66,12 @@ func TestFallbackToServiceName(t *testing.T) {
 }
 
 func TestSuseAIComponentNameTakesPrecedence(t *testing.T) {
-	acc := newTopologyAccumulator("test-ns")
+	acc := newTopologyAccumulator("test-ns", time.Hour)
 	td := makeTraces(
 		map[string]string{
-			"service.name":            "k8s-pod-name",
-			"suse.ai.component.name":  "open-webui",
-			"suse.ai.component.type":  "ui",
+			"service.name":           "k8s-pod-name",
+			"suse.ai.component.name": "open-webui",
+			"suse.ai.component.type": "ui",
 		},
 		map[string]string{},
 	)
@@ -85,7 +86,7 @@ func TestSuseAIComponentNameTakesPrecedence(t *testing.T) {
 }
 
 func TestDiscoverAppComponent(t *testing.T) {
-	acc := newTopologyAccumulator("test-ns")
+	acc := newTopologyAccumulator("test-ns", time.Hour)
 	td := makeTraces(
 		map[string]string{"suse.ai.component.name": "my-app", "suse.ai.component.type": "ui"},
 		map[string]string{},
@@ -108,7 +109,7 @@ func TestDiscoverAppComponent(t *testing.T) {
 }
 
 func TestDefaultComponentType(t *testing.T) {
-	acc := newTopologyAccumulator("test-ns")
+	acc := newTopologyAccumulator("test-ns", time.Hour)
 	td := makeTraces(
 		map[string]string{"suse.ai.component.name": "my-app"},
 		map[string]string{},
@@ -124,7 +125,7 @@ func TestDefaultComponentType(t *testing.T) {
 }
 
 func TestDiscoverInferenceEngineAndUsesRelation(t *testing.T) {
-	acc := newTopologyAccumulator("test-ns")
+	acc := newTopologyAccumulator("test-ns", time.Hour)
 	td := makeTraces(
 		map[string]string{"suse.ai.component.name": "open-webui", "suse.ai.component.type": "ui"},
 		map[string]string{"gen_ai.provider.name": "ollama"},
@@ -150,7 +151,7 @@ func TestDiscoverInferenceEngineAndUsesRelation(t *testing.T) {
 }
 
 func TestDiscoverModelAndRunsRelation(t *testing.T) {
-	acc := newTopologyAccumulator("test-ns")
+	acc := newTopologyAccumulator("test-ns", time.Hour)
 	td := makeTraces(
 		map[string]string{"suse.ai.component.name": "open-webui", "suse.ai.component.type": "ui"},
 		map[string]string{"gen_ai.provider.name": "ollama", "gen_ai.request.model": "llama3.2"},
@@ -182,7 +183,7 @@ func TestDiscoverModelAndRunsRelation(t *testing.T) {
 }
 
 func TestDiscoverVectorDB(t *testing.T) {
-	acc := newTopologyAccumulator("test-ns")
+	acc := newTopologyAccumulator("test-ns", time.Hour)
 	td := makeTraces(
 		map[string]string{"suse.ai.component.name": "my-app", "suse.ai.component.type": "application"},
 		map[string]string{"db.system": "milvus"},
@@ -201,7 +202,7 @@ func TestDiscoverVectorDB(t *testing.T) {
 }
 
 func TestDiscoverSearchEngine(t *testing.T) {
-	acc := newTopologyAccumulator("test-ns")
+	acc := newTopologyAccumulator("test-ns", time.Hour)
 	td := makeTraces(
 		map[string]string{"suse.ai.component.name": "my-app", "suse.ai.component.type": "application"},
 		map[string]string{"db.system": "opensearch"},
@@ -217,7 +218,7 @@ func TestDiscoverSearchEngine(t *testing.T) {
 }
 
 func TestCaseInsensitiveDBSystem(t *testing.T) {
-	acc := newTopologyAccumulator("test-ns")
+	acc := newTopologyAccumulator("test-ns", time.Hour)
 	td := makeTraces(
 		map[string]string{"suse.ai.component.name": "my-app", "suse.ai.component.type": "application"},
 		map[string]string{"db.system": "Milvus"},
@@ -235,25 +236,90 @@ func TestCaseInsensitiveDBSystem(t *testing.T) {
 	}
 }
 
-func TestSnapshotResetsAccumulator(t *testing.T) {
-	acc := newTopologyAccumulator("test-ns")
+// clock is a controllable time source for retention tests.
+type clock struct{ t time.Time }
+
+func (c *clock) now() time.Time { return c.t }
+
+func (c *clock) advance(d time.Duration) { c.t = c.t.Add(d) }
+
+func newTestAccumulator(retention time.Duration) (*topologyAccumulator, *clock) {
+	acc := newTopologyAccumulator("test-ns", retention)
+	clk := &clock{t: time.Unix(1_700_000_000, 0)}
+	acc.now = clk.now
+	return acc, clk
+}
+
+func TestSnapshotRetainsEntriesAcrossFlushes(t *testing.T) {
+	acc, _ := newTestAccumulator(15 * time.Minute)
 	td := makeTraces(
 		map[string]string{"suse.ai.component.name": "my-app", "suse.ai.component.type": "application"},
 		map[string]string{"gen_ai.provider.name": "ollama"},
 	)
 	acc.processTraces(td)
-	c1, r1 := acc.snapshot()
-	if len(c1) != 2 || len(r1) != 1 {
-		t.Fatalf("first snapshot: expected 2 components and 1 relation, got %d/%d", len(c1), len(r1))
+
+	// Every flush within the retention window keeps re-sending the topology,
+	// even when no new traces arrive.
+	for i := 0; i < 3; i++ {
+		c, r := acc.snapshot()
+		if len(c) != 2 || len(r) != 1 {
+			t.Fatalf("snapshot %d: expected 2 components and 1 relation, got %d/%d", i, len(c), len(r))
+		}
 	}
-	c2, r2 := acc.snapshot()
-	if len(c2) != 0 || len(r2) != 0 {
-		t.Errorf("second snapshot: expected empty, got %d/%d", len(c2), len(r2))
+}
+
+func TestSnapshotEvictsAfterRetention(t *testing.T) {
+	acc, clk := newTestAccumulator(15 * time.Minute)
+	td := makeTraces(
+		map[string]string{"suse.ai.component.name": "my-app", "suse.ai.component.type": "application"},
+		map[string]string{"gen_ai.provider.name": "ollama"},
+	)
+	acc.processTraces(td)
+
+	// Just before the window elapses, everything is still present.
+	clk.advance(15*time.Minute - time.Second)
+	c, r := acc.snapshot()
+	if len(c) != 2 || len(r) != 1 {
+		t.Fatalf("before window: expected 2 components and 1 relation, got %d/%d", len(c), len(r))
+	}
+
+	// Once the window has fully elapsed, unseen entries are evicted.
+	clk.advance(2 * time.Second)
+	c, r = acc.snapshot()
+	if len(c) != 0 || len(r) != 0 {
+		t.Errorf("after window: expected everything evicted, got %d/%d", len(c), len(r))
+	}
+}
+
+func TestReobservingResetsTTL(t *testing.T) {
+	acc, clk := newTestAccumulator(15 * time.Minute)
+	td := makeTraces(
+		map[string]string{"suse.ai.component.name": "my-app", "suse.ai.component.type": "application"},
+		map[string]string{"gen_ai.provider.name": "ollama"},
+	)
+	acc.processTraces(td)
+
+	// Re-observe near the end of the window; this resets lastSeen.
+	clk.advance(14 * time.Minute)
+	acc.processTraces(td)
+
+	// Past the original expiry but within the window of the second sighting.
+	clk.advance(14 * time.Minute)
+	c, r := acc.snapshot()
+	if len(c) != 2 || len(r) != 1 {
+		t.Fatalf("after re-observation: expected 2 components and 1 relation, got %d/%d", len(c), len(r))
+	}
+
+	// Now let the refreshed TTL fully elapse.
+	clk.advance(2 * time.Minute)
+	c, r = acc.snapshot()
+	if len(c) != 0 || len(r) != 0 {
+		t.Errorf("after refreshed window: expected everything evicted, got %d/%d", len(c), len(r))
 	}
 }
 
 func TestModelWithoutProviderIsIgnored(t *testing.T) {
-	acc := newTopologyAccumulator("test-ns")
+	acc := newTopologyAccumulator("test-ns", time.Hour)
 	td := makeTraces(
 		map[string]string{"suse.ai.component.name": "my-app", "suse.ai.component.type": "application"},
 		map[string]string{"gen_ai.request.model": "llama3.2"},
@@ -269,7 +335,7 @@ func TestModelWithoutProviderIsIgnored(t *testing.T) {
 }
 
 func TestConcurrentProcessing(t *testing.T) {
-	acc := newTopologyAccumulator("test-ns")
+	acc := newTopologyAccumulator("test-ns", time.Hour)
 	var wg sync.WaitGroup
 	for i := 0; i < 100; i++ {
 		wg.Add(1)
@@ -293,7 +359,7 @@ func TestConcurrentProcessing(t *testing.T) {
 }
 
 func TestIdempotentProcessing(t *testing.T) {
-	acc := newTopologyAccumulator("test-ns")
+	acc := newTopologyAccumulator("test-ns", time.Hour)
 	td := makeTraces(
 		map[string]string{"suse.ai.component.name": "my-app", "suse.ai.component.type": "application"},
 		map[string]string{"gen_ai.provider.name": "ollama"},

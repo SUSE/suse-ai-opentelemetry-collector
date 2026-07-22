@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"go.opentelemetry.io/collector/pdata/ptrace"
 )
@@ -15,20 +16,34 @@ var (
 	searchEngineSystems   = map[string]bool{"opensearch": true, "elasticsearch": true}
 )
 
-type topologyAccumulator struct {
-	mu          sync.Mutex
-	components  map[string]Component
-	relations   map[string]Relation
-	namespace   string
-	clusterName string
+type componentEntry struct {
+	component Component
+	lastSeen  time.Time
 }
 
-func newTopologyAccumulator(namespace, clusterName string) *topologyAccumulator {
+type relationEntry struct {
+	relation Relation
+	lastSeen time.Time
+}
+
+type topologyAccumulator struct {
+	mu          sync.Mutex
+	components  map[string]componentEntry
+	relations   map[string]relationEntry
+	namespace   string
+	clusterName string
+	retention   time.Duration
+	now         func() time.Time
+}
+
+func newTopologyAccumulator(namespace, clusterName string, retention time.Duration) *topologyAccumulator {
 	return &topologyAccumulator{
-		components:  make(map[string]Component),
-		relations:   make(map[string]Relation),
+		components:  make(map[string]componentEntry),
+		relations:   make(map[string]relationEntry),
 		namespace:   namespace,
 		clusterName: clusterName,
+		retention:   retention,
+		now:         time.Now,
 	}
 }
 
@@ -98,7 +113,8 @@ func (a *topologyAccumulator) processSpan(appID string, span ptrace.Span) {
 func (a *topologyAccumulator) ensureComponent(name, componentType string) string {
 	externalID := fmt.Sprintf("urn:suse-ai:product:%s:%s", componentType, name)
 
-	if _, exists := a.components[externalID]; !exists {
+	entry, exists := a.components[externalID]
+	if !exists {
 		labels := []string{
 			fmt.Sprintf("suse.ai.component.type:%s", componentType),
 		}
@@ -111,7 +127,7 @@ func (a *topologyAccumulator) ensureComponent(name, componentType string) string
 			labels = append(labels, fmt.Sprintf("k8s.cluster.name:%s", a.clusterName))
 		}
 
-		a.components[externalID] = Component{
+		entry.component = Component{
 			ExternalID: externalID,
 			Type:       Type{Name: componentType},
 			Data: ComponentData{
@@ -126,14 +142,18 @@ func (a *topologyAccumulator) ensureComponent(name, componentType string) string
 		}
 	}
 
+	entry.lastSeen = a.now()
+	a.components[externalID] = entry
+
 	return externalID
 }
 
 func (a *topologyAccumulator) ensureRelation(sourceID, targetID, relationType string) {
 	key := fmt.Sprintf("%s --> %s", sourceID, targetID)
 
-	if _, exists := a.relations[key]; !exists {
-		a.relations[key] = Relation{
+	entry, exists := a.relations[key]
+	if !exists {
+		entry.relation = Relation{
 			ExternalID: key,
 			SourceID:   sourceID,
 			TargetID:   targetID,
@@ -141,24 +161,37 @@ func (a *topologyAccumulator) ensureRelation(sourceID, targetID, relationType st
 			Data:       make(map[string]interface{}),
 		}
 	}
+
+	entry.lastSeen = a.now()
+	a.relations[key] = entry
 }
 
+// snapshot evicts any component or relation not seen within the retention
+// window, then returns everything that remains. Entries persist across
+// snapshots so the topology is not forgotten between sparse traces.
 func (a *topologyAccumulator) snapshot() ([]Component, []Relation) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
+	cutoff := a.now().Add(-a.retention)
+
 	components := make([]Component, 0, len(a.components))
-	for _, c := range a.components {
-		components = append(components, c)
+	for id, c := range a.components {
+		if c.lastSeen.Before(cutoff) {
+			delete(a.components, id)
+			continue
+		}
+		components = append(components, c.component)
 	}
 
 	relations := make([]Relation, 0, len(a.relations))
-	for _, r := range a.relations {
-		relations = append(relations, r)
+	for key, r := range a.relations {
+		if r.lastSeen.Before(cutoff) {
+			delete(a.relations, key)
+			continue
+		}
+		relations = append(relations, r.relation)
 	}
-
-	a.components = make(map[string]Component)
-	a.relations = make(map[string]Relation)
 
 	return components, relations
 }

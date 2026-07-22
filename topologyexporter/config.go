@@ -11,8 +11,6 @@ type Config struct {
 	TLS           configtls.ClientConfig `mapstructure:"tls"`
 	Endpoint      string                 `mapstructure:"endpoint"`
 	APIKey        string                 `mapstructure:"api_key"`
-	InstanceType  string                 `mapstructure:"instance_type"`
-	InstanceURL   string                 `mapstructure:"instance_url"`
 	FlushInterval time.Duration          `mapstructure:"flush_interval"`
 	Namespace     string                 `mapstructure:"namespace"`
 	// ClusterName is attached to every product component as a k8s.cluster.name
@@ -24,8 +22,6 @@ type Config struct {
 
 func createDefaultConfig() *Config {
 	return &Config{
-		InstanceType:  "suse-ai",
-		InstanceURL:   "local",
 		FlushInterval: 60 * time.Second,
 	}
 }

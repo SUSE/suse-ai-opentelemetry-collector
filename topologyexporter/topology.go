@@ -16,17 +16,19 @@ var (
 )
 
 type topologyAccumulator struct {
-	mu         sync.Mutex
-	components map[string]Component
-	relations  map[string]Relation
-	namespace  string
+	mu          sync.Mutex
+	components  map[string]Component
+	relations   map[string]Relation
+	namespace   string
+	clusterName string
 }
 
-func newTopologyAccumulator(namespace string) *topologyAccumulator {
+func newTopologyAccumulator(namespace, clusterName string) *topologyAccumulator {
 	return &topologyAccumulator{
-		components: make(map[string]Component),
-		relations:  make(map[string]Relation),
-		namespace:  namespace,
+		components:  make(map[string]Component),
+		relations:   make(map[string]Relation),
+		namespace:   namespace,
+		clusterName: clusterName,
 	}
 }
 
@@ -102,6 +104,11 @@ func (a *topologyAccumulator) ensureComponent(name, componentType string) string
 		}
 		if a.namespace != "" {
 			labels = append(labels, fmt.Sprintf("k8s.namespace.name:%s", a.namespace))
+		}
+		// Cluster is metadata only — the externalID stays cluster-agnostic so the
+		// same product aggregates across clusters.
+		if a.clusterName != "" {
+			labels = append(labels, fmt.Sprintf("k8s.cluster.name:%s", a.clusterName))
 		}
 
 		a.components[externalID] = Component{

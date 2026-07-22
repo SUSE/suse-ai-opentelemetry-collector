@@ -20,7 +20,7 @@ type topologyExporter struct {
 func newTopologyExporter(cfg *Config) *topologyExporter {
 	return &topologyExporter{
 		cfg:         cfg,
-		accumulator: newTopologyAccumulator(cfg.Namespace),
+		accumulator: newTopologyAccumulator(cfg.Namespace, cfg.ClusterName),
 		done:        make(chan struct{}),
 	}
 }

@@ -1,6 +1,7 @@
 package topologyexporter
 
 import (
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -24,7 +25,7 @@ func makeTraces(resourceAttrs map[string]string, spanAttrs map[string]string) pt
 }
 
 func TestSkipSpanWithoutComponentName(t *testing.T) {
-	acc := newTopologyAccumulator("test-ns", time.Hour)
+	acc := newTopologyAccumulator("test-ns", "", time.Hour)
 	td := makeTraces(map[string]string{}, map[string]string{"gen_ai.provider.name": "ollama"})
 	acc.processTraces(td)
 	components, relations := acc.snapshot()
@@ -37,7 +38,7 @@ func TestSkipSpanWithoutComponentName(t *testing.T) {
 }
 
 func TestFallbackToServiceName(t *testing.T) {
-	acc := newTopologyAccumulator("test-ns", time.Hour)
+	acc := newTopologyAccumulator("test-ns", "", time.Hour)
 	td := makeTraces(
 		map[string]string{"service.name": "open-webui"},
 		map[string]string{"gen_ai.provider.name": "ollama"},
@@ -66,7 +67,7 @@ func TestFallbackToServiceName(t *testing.T) {
 }
 
 func TestSuseAIComponentNameTakesPrecedence(t *testing.T) {
-	acc := newTopologyAccumulator("test-ns", time.Hour)
+	acc := newTopologyAccumulator("test-ns", "", time.Hour)
 	td := makeTraces(
 		map[string]string{
 			"service.name":           "k8s-pod-name",
@@ -86,7 +87,7 @@ func TestSuseAIComponentNameTakesPrecedence(t *testing.T) {
 }
 
 func TestDiscoverAppComponent(t *testing.T) {
-	acc := newTopologyAccumulator("test-ns", time.Hour)
+	acc := newTopologyAccumulator("test-ns", "", time.Hour)
 	td := makeTraces(
 		map[string]string{"suse.ai.component.name": "my-app", "suse.ai.component.type": "ui"},
 		map[string]string{},
@@ -109,7 +110,7 @@ func TestDiscoverAppComponent(t *testing.T) {
 }
 
 func TestDefaultComponentType(t *testing.T) {
-	acc := newTopologyAccumulator("test-ns", time.Hour)
+	acc := newTopologyAccumulator("test-ns", "", time.Hour)
 	td := makeTraces(
 		map[string]string{"suse.ai.component.name": "my-app"},
 		map[string]string{},
@@ -125,7 +126,7 @@ func TestDefaultComponentType(t *testing.T) {
 }
 
 func TestDiscoverInferenceEngineAndUsesRelation(t *testing.T) {
-	acc := newTopologyAccumulator("test-ns", time.Hour)
+	acc := newTopologyAccumulator("test-ns", "", time.Hour)
 	td := makeTraces(
 		map[string]string{"suse.ai.component.name": "open-webui", "suse.ai.component.type": "ui"},
 		map[string]string{"gen_ai.provider.name": "ollama"},
@@ -151,7 +152,7 @@ func TestDiscoverInferenceEngineAndUsesRelation(t *testing.T) {
 }
 
 func TestDiscoverModelAndRunsRelation(t *testing.T) {
-	acc := newTopologyAccumulator("test-ns", time.Hour)
+	acc := newTopologyAccumulator("test-ns", "", time.Hour)
 	td := makeTraces(
 		map[string]string{"suse.ai.component.name": "open-webui", "suse.ai.component.type": "ui"},
 		map[string]string{"gen_ai.provider.name": "ollama", "gen_ai.request.model": "llama3.2"},
@@ -183,7 +184,7 @@ func TestDiscoverModelAndRunsRelation(t *testing.T) {
 }
 
 func TestDiscoverVectorDB(t *testing.T) {
-	acc := newTopologyAccumulator("test-ns", time.Hour)
+	acc := newTopologyAccumulator("test-ns", "", time.Hour)
 	td := makeTraces(
 		map[string]string{"suse.ai.component.name": "my-app", "suse.ai.component.type": "application"},
 		map[string]string{"db.system": "milvus"},
@@ -202,7 +203,7 @@ func TestDiscoverVectorDB(t *testing.T) {
 }
 
 func TestDiscoverSearchEngine(t *testing.T) {
-	acc := newTopologyAccumulator("test-ns", time.Hour)
+	acc := newTopologyAccumulator("test-ns", "", time.Hour)
 	td := makeTraces(
 		map[string]string{"suse.ai.component.name": "my-app", "suse.ai.component.type": "application"},
 		map[string]string{"db.system": "opensearch"},
@@ -218,7 +219,7 @@ func TestDiscoverSearchEngine(t *testing.T) {
 }
 
 func TestCaseInsensitiveDBSystem(t *testing.T) {
-	acc := newTopologyAccumulator("test-ns", time.Hour)
+	acc := newTopologyAccumulator("test-ns", "", time.Hour)
 	td := makeTraces(
 		map[string]string{"suse.ai.component.name": "my-app", "suse.ai.component.type": "application"},
 		map[string]string{"db.system": "Milvus"},
@@ -244,7 +245,7 @@ func (c *clock) now() time.Time { return c.t }
 func (c *clock) advance(d time.Duration) { c.t = c.t.Add(d) }
 
 func newTestAccumulator(retention time.Duration) (*topologyAccumulator, *clock) {
-	acc := newTopologyAccumulator("test-ns", retention)
+	acc := newTopologyAccumulator("test-ns", "", retention)
 	clk := &clock{t: time.Unix(1_700_000_000, 0)}
 	acc.now = clk.now
 	return acc, clk
@@ -319,7 +320,7 @@ func TestReobservingResetsTTL(t *testing.T) {
 }
 
 func TestModelWithoutProviderIsIgnored(t *testing.T) {
-	acc := newTopologyAccumulator("test-ns", time.Hour)
+	acc := newTopologyAccumulator("test-ns", "", time.Hour)
 	td := makeTraces(
 		map[string]string{"suse.ai.component.name": "my-app", "suse.ai.component.type": "application"},
 		map[string]string{"gen_ai.request.model": "llama3.2"},
@@ -335,7 +336,7 @@ func TestModelWithoutProviderIsIgnored(t *testing.T) {
 }
 
 func TestConcurrentProcessing(t *testing.T) {
-	acc := newTopologyAccumulator("test-ns", time.Hour)
+	acc := newTopologyAccumulator("test-ns", "", time.Hour)
 	var wg sync.WaitGroup
 	for i := 0; i < 100; i++ {
 		wg.Add(1)
@@ -359,7 +360,7 @@ func TestConcurrentProcessing(t *testing.T) {
 }
 
 func TestIdempotentProcessing(t *testing.T) {
-	acc := newTopologyAccumulator("test-ns", time.Hour)
+	acc := newTopologyAccumulator("test-ns", "", time.Hour)
 	td := makeTraces(
 		map[string]string{"suse.ai.component.name": "my-app", "suse.ai.component.type": "application"},
 		map[string]string{"gen_ai.provider.name": "ollama"},
@@ -372,5 +373,54 @@ func TestIdempotentProcessing(t *testing.T) {
 	}
 	if len(relations) != 1 {
 		t.Errorf("expected 1 relation (no duplicates), got %d", len(relations))
+	}
+}
+
+func hasLabel(labels []string, want string) bool {
+	for _, l := range labels {
+		if l == want {
+			return true
+		}
+	}
+	return false
+}
+
+func TestClusterNameAddedAsLabelOnly(t *testing.T) {
+	acc := newTopologyAccumulator("test-ns", "gpu-cluster", time.Hour)
+	td := makeTraces(
+		map[string]string{"suse.ai.component.name": "ollama", "suse.ai.component.type": "inference-engine"},
+		map[string]string{},
+	)
+	acc.processTraces(td)
+	components, _ := acc.snapshot()
+	if len(components) != 1 {
+		t.Fatalf("expected 1 component, got %d", len(components))
+	}
+	c := components[0]
+	// The cluster is metadata only: the externalID must stay cluster-agnostic so
+	// the same product aggregates across clusters (matches the OTel stackpack).
+	if c.ExternalID != "urn:suse-ai:product:inference-engine:ollama" {
+		t.Errorf("externalID must not include the cluster, got %s", c.ExternalID)
+	}
+	if !hasLabel(c.Data.Labels, "k8s.cluster.name:gpu-cluster") {
+		t.Errorf("expected k8s.cluster.name label, got %v", c.Data.Labels)
+	}
+}
+
+func TestClusterNameOmittedWhenEmpty(t *testing.T) {
+	acc := newTopologyAccumulator("test-ns", "", time.Hour)
+	td := makeTraces(
+		map[string]string{"suse.ai.component.name": "ollama", "suse.ai.component.type": "inference-engine"},
+		map[string]string{},
+	)
+	acc.processTraces(td)
+	components, _ := acc.snapshot()
+	if len(components) != 1 {
+		t.Fatalf("expected 1 component, got %d", len(components))
+	}
+	for _, l := range components[0].Data.Labels {
+		if strings.HasPrefix(l, "k8s.cluster.name:") {
+			t.Errorf("did not expect a cluster label when clusterName is empty, got %q", l)
+		}
 	}
 }

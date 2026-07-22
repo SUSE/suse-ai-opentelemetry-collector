@@ -10,6 +10,16 @@ import (
 	"go.opentelemetry.io/collector/pdata/ptrace"
 )
 
+// topologyInstanceType and topologyStreamID form the SUSE Observability receiver
+// stream (sts_topo_<type>_<id>). They are a fixed contract with the stackpack's
+// "SUSE AI Topology" DataSource (integrationType + topic) in
+// suse-ai-observability-extension synchronization.sty, so they are constants, not
+// config: any other value routes topology to a topic the sync never reads.
+const (
+	topologyInstanceType = "suse-ai"
+	topologyStreamID     = "collector"
+)
+
 type topologyExporter struct {
 	cfg         *Config
 	accumulator *topologyAccumulator
@@ -20,7 +30,7 @@ type topologyExporter struct {
 func newTopologyExporter(cfg *Config) *topologyExporter {
 	return &topologyExporter{
 		cfg:         cfg,
-		accumulator: newTopologyAccumulator(cfg.Namespace, cfg.Retention),
+		accumulator: newTopologyAccumulator(cfg.Namespace, cfg.ClusterName, cfg.Retention),
 		done:        make(chan struct{}),
 	}
 }
@@ -38,8 +48,8 @@ func (e *topologyExporter) start(ctx context.Context, host component.Host) error
 	httpClient := &http.Client{Transport: transport}
 
 	instance := Instance{
-		Type: e.cfg.InstanceType,
-		URL:  e.cfg.InstanceURL,
+		Type: topologyInstanceType,
+		URL:  topologyStreamID,
 	}
 	e.client = newReceiverClient(e.cfg.Endpoint, e.cfg.APIKey, instance, httpClient)
 

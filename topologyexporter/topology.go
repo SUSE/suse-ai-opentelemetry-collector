@@ -27,21 +27,23 @@ type relationEntry struct {
 }
 
 type topologyAccumulator struct {
-	mu         sync.Mutex
-	components map[string]componentEntry
-	relations  map[string]relationEntry
-	namespace  string
-	retention  time.Duration
-	now        func() time.Time
+	mu          sync.Mutex
+	components  map[string]componentEntry
+	relations   map[string]relationEntry
+	namespace   string
+	clusterName string
+	retention   time.Duration
+	now         func() time.Time
 }
 
-func newTopologyAccumulator(namespace string, retention time.Duration) *topologyAccumulator {
+func newTopologyAccumulator(namespace, clusterName string, retention time.Duration) *topologyAccumulator {
 	return &topologyAccumulator{
-		components: make(map[string]componentEntry),
-		relations:  make(map[string]relationEntry),
-		namespace:  namespace,
-		retention:  retention,
-		now:        time.Now,
+		components:  make(map[string]componentEntry),
+		relations:   make(map[string]relationEntry),
+		namespace:   namespace,
+		clusterName: clusterName,
+		retention:   retention,
+		now:         time.Now,
 	}
 }
 
@@ -118,6 +120,11 @@ func (a *topologyAccumulator) ensureComponent(name, componentType string) string
 		}
 		if a.namespace != "" {
 			labels = append(labels, fmt.Sprintf("k8s.namespace.name:%s", a.namespace))
+		}
+		// Cluster is metadata only — the externalID stays cluster-agnostic so the
+		// same product aggregates across clusters.
+		if a.clusterName != "" {
+			labels = append(labels, fmt.Sprintf("k8s.cluster.name:%s", a.clusterName))
 		}
 
 		entry.component = Component{

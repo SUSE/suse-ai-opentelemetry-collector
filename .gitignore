@@ -9,3 +9,7 @@ vendor/
 *.exe
 *.test
 *.out
+
+# Local agent tooling / generated plans
+.claude/
+docs/superpowers/

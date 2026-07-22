@@ -11,17 +11,18 @@ type Config struct {
 	TLS           configtls.ClientConfig `mapstructure:"tls"`
 	Endpoint      string                 `mapstructure:"endpoint"`
 	APIKey        string                 `mapstructure:"api_key"`
-	InstanceType  string                 `mapstructure:"instance_type"`
-	InstanceURL   string                 `mapstructure:"instance_url"`
 	FlushInterval time.Duration          `mapstructure:"flush_interval"`
 	Retention     time.Duration          `mapstructure:"retention"`
 	Namespace     string                 `mapstructure:"namespace"`
+	// ClusterName is attached to every product component as a k8s.cluster.name
+	// metadata label. It is intentionally NOT part of the component URN, so the
+	// same product observed on different clusters still aggregates into a single
+	// component (matching the OpenTelemetry stackpack model).
+	ClusterName string `mapstructure:"cluster_name"`
 }
 
 func createDefaultConfig() *Config {
 	return &Config{
-		InstanceType:  "suse-ai",
-		InstanceURL:   "local",
 		FlushInterval: 60 * time.Second,
 		Retention:     15 * time.Minute,
 	}

@@ -7,6 +7,9 @@ on:
     paths:
       - 'builder-config.yaml'
       - 'Containerfile'
+      - 'collector-config.yaml'
+      - 'topologyexporter/**'
+      - '.github/workflows/publish-container.yml'
       - 'suse-ai-opentelemetry-collector/**'
       - 'scripts/**'
   release:

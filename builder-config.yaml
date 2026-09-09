@@ -1,6 +1,7 @@
 dist:
   name: suse-ai-opentelemetry-collector
   description: Minimal OTel Collector distribution for monitoring SUSE AI
+  version: 0.160.0
   output_path: ./suse-ai-opentelemetry-collector
 extensions:
   - gomod: go.opentelemetry.io/collector/extension/zpagesextension v0.160.0

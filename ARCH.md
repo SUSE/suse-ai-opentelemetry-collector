@@ -17,7 +17,7 @@ SUSE AI components (Milvus, Open WebUI, vLLM, Ollama) are deployed with pre-conf
 ### Layer 2: Intelligent Collection
 A custom OTel collector (`suse-ai-opentelemetry-collector`) normalizes incoming telemetry.
 - **Prometheus Scrapers**: Pulls deep metrics from infrastructure components (Milvus, vLLM, OpenSearch).
-- **Topology Promotion**: (Planned) The collector "promotes" the existence of logical components by emitting topology elements based on the presence of specific metrics, ensuring observability even when trace data is sparse.
+- **Resource Context**: The collector promotes missing GenAI attributes and aggregates distinct model names within each resource batch. Scraper resources carry standard service, namespace, and GenAI/DB identity, allowing the downstream OTel integration to supply topology even when trace data is sparse. Original traces and metrics retain their identities and are exported once.
 
 ### Layer 3: Virtual Topology (StackPack)
 The StackPack implements a "Multiplexed Sync" strategy to build the graph:

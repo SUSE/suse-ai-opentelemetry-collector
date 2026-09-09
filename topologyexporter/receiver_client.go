@@ -2,10 +2,14 @@ package topologyexporter
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
 )
 
@@ -27,7 +31,7 @@ func newReceiverClient(endpoint, apiKey string, instance Instance, httpClient *h
 	}
 }
 
-func (c *receiverClient) send(components []Component, relations []Relation) error {
+func (c *receiverClient) send(ctx context.Context, components []Component, relations []Relation) error {
 	payload := NewPayload(c.instance, components, relations)
 
 	body, err := json.Marshal(payload)
@@ -35,20 +39,33 @@ func (c *receiverClient) send(components []Component, relations []Relation) erro
 		return fmt.Errorf("failed to marshal payload: %w", err)
 	}
 
-	url := fmt.Sprintf("%s/%s?api_key=%s", c.endpoint, receiverEndpoint, c.apiKey)
-	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
+	endpoint, err := url.Parse(c.endpoint + "/" + receiverEndpoint)
 	if err != nil {
-		return fmt.Errorf("failed to create request: %w", err)
+		return errors.New("invalid receiver endpoint")
+	}
+	query := endpoint.Query()
+	query.Set("api_key", c.apiKey)
+	endpoint.RawQuery = query.Encode()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint.String(), bytes.NewReader(body))
+	if err != nil {
+		return errors.New("failed to create topology request")
 	}
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
+		// net/http wraps transport failures in a url.Error containing the secret
+		// query string. Preserve cancellation/error identity without the URL.
+		var urlErr *url.Error
+		if errors.As(err, &urlErr) {
+			err = urlErr.Err
+		}
 		return fmt.Errorf("failed to send topology: %w", err)
 	}
 	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
 
-	if resp.StatusCode >= 400 {
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("receiver returned status %d", resp.StatusCode)
 	}
 

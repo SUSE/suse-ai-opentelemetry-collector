@@ -1,0 +1,56 @@
+name: Validate Collector
+
+on:
+  pull_request:
+    paths:
+      - 'builder-config.yaml'
+      - 'collector-config.yaml'
+      - 'Containerfile'
+      - 'suse-ai-opentelemetry-collector/**'
+      - 'topologyexporter/**'
+      - 'scripts/**'
+      - 'tests/**'
+      - '.github/workflows/**'
+  push:
+    branches: [main]
+    paths:
+      - 'builder-config.yaml'
+      - 'collector-config.yaml'
+      - 'Containerfile'
+      - 'suse-ai-opentelemetry-collector/**'
+      - 'topologyexporter/**'
+      - 'scripts/**'
+      - 'tests/**'
+      - '.github/workflows/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    env:
+      GOTOOLCHAIN: local
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: '1.26.7'
+          cache-dependency-path: |
+            suse-ai-opentelemetry-collector/go.sum
+            topologyexporter/go.sum
+      - name: Check shell scripts
+        run: shellcheck scripts/*.sh
+      - name: Test topology exporter
+        working-directory: topologyexporter
+        run: go test -mod=readonly -race ./...
+      - name: Build and test with collector dependencies
+        working-directory: suse-ai-opentelemetry-collector
+        run: |
+          go test -mod=readonly -race github.com/suse/suse-ai-opentelemetry-collector/topologyexporter
+          go build -mod=readonly -o "$RUNNER_TEMP/otelcol-custom" .
+      - name: Install integration test dependency
+        run: python3 -m pip install -r tests/requirements.txt
+      - name: Validate configuration and telemetry behavior
+        run: python3 tests/test_collector.py --collector "$RUNNER_TEMP/otelcol-custom"

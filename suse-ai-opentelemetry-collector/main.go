@@ -20,7 +20,7 @@ func main() {
 	info := component.BuildInfo{
 		Command:     "suse-ai-opentelemetry-collector",
 		Description: "Minimal OTel Collector distribution for monitoring SUSE AI",
-		Version:     "",
+		Version:     "0.160.0",
 	}
 
 	set := otelcol.CollectorSettings{

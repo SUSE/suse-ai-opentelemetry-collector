@@ -1,11 +1,16 @@
 package topologyexporter
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"strings"
 	"testing"
+	"time"
 )
 
 func TestReceiverClientSendsCorrectPayload(t *testing.T) {
@@ -20,7 +25,8 @@ func TestReceiverClientSendsCorrectPayload(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := newReceiverClient(server.URL, "test-api-key", Instance{Type: "suse-ai", URL: "local"}, http.DefaultClient)
+	const apiKey = "test&api=key +/?"
+	client := newReceiverClient(server.URL, apiKey, Instance{Type: "suse-ai", URL: "local"}, http.DefaultClient)
 
 	components := []Component{{
 		ExternalID: "urn:suse-ai:product:inference-engine:ollama",
@@ -41,13 +47,13 @@ func TestReceiverClientSendsCorrectPayload(t *testing.T) {
 		Type:       Type{Name: "uses"},
 	}}
 
-	err := client.send(components, relations)
+	err := client.send(context.Background(), components, relations)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if receivedAPIKey != "test-api-key" {
-		t.Errorf("expected api_key=test-api-key, got %s", receivedAPIKey)
+	if receivedAPIKey != apiKey {
+		t.Errorf("expected api_key=%q, got %q", apiKey, receivedAPIKey)
 	}
 	if len(receivedPayload.Topologies) != 1 {
 		t.Fatalf("expected 1 topology, got %d", len(receivedPayload.Topologies))
@@ -67,6 +73,56 @@ func TestReceiverClientSendsCorrectPayload(t *testing.T) {
 	}
 }
 
+func TestReceiverClientRedactsTransportErrors(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	server.Close()
+	const key = "secret&key=with spaces"
+	client := newReceiverClient(server.URL, key, Instance{}, http.DefaultClient)
+	err := client.send(context.Background(), nil, nil)
+	if err == nil {
+		t.Fatal("expected connection failure")
+	}
+	for _, secret := range []string{key, url.QueryEscape(key), "api_key="} {
+		if strings.Contains(err.Error(), secret) {
+			t.Fatalf("transport error contains credentials: %v", err)
+		}
+	}
+}
+
+func TestReceiverClientHonorsDeadline(t *testing.T) {
+	release := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		select {
+		case <-r.Context().Done():
+		case <-release:
+		}
+	}))
+	defer server.Close()
+	defer close(release)
+	client := newReceiverClient(server.URL, "test-key", Instance{}, http.DefaultClient)
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	err := client.send(ctx, nil, nil)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected deadline exceeded, got %v", err)
+	}
+}
+
+func TestReceiverClientRejectsRedirect(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Location", "/elsewhere")
+		w.WriteHeader(http.StatusTemporaryRedirect)
+	}))
+	defer server.Close()
+	client := newReceiverClient(server.URL, "test-key", Instance{}, &http.Client{
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	})
+	if err := client.send(context.Background(), nil, nil); err == nil {
+		t.Fatal("redirect must not be reported as successful delivery")
+	}
+}
+
 func TestReceiverClientHandlesServerError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
@@ -74,7 +130,7 @@ func TestReceiverClientHandlesServerError(t *testing.T) {
 	defer server.Close()
 
 	client := newReceiverClient(server.URL, "test-key", Instance{Type: "suse-ai", URL: "local"}, http.DefaultClient)
-	err := client.send([]Component{}, []Relation{})
+	err := client.send(context.Background(), []Component{}, []Relation{})
 	if err == nil {
 		t.Error("expected error for 500 response")
 	}

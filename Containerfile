@@ -1,4 +1,4 @@
-FROM dp.apps.rancher.io/containers/go:1.25.5 AS build-stage
+FROM dp.apps.rancher.io/containers/go:1.26.7 AS build-stage
 
 WORKDIR /build
 
@@ -9,7 +9,11 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
     GO111MODULE=on go install go.opentelemetry.io/collector/cmd/builder@v0.160.0
 
 RUN --mount=type=cache,target=/root/.cache/go-build \
-    $(go env GOPATH)/bin/builder --config builder-config.yaml
+    "$(go env GOPATH)/bin/builder" --config builder-config.yaml
+
+COPY ./collector-config.yaml collector-config.yaml
+RUN API_KEY=validation ELASTICSEARCH_PASSWORD=validation \
+    ./suse-ai-opentelemetry-collector/suse-ai-opentelemetry-collector validate --config collector-config.yaml
 
 FROM dp.apps.rancher.io/containers/bci-micro:15.7
 
@@ -25,4 +29,4 @@ COPY --chmod=755 --from=build-stage /build/suse-ai-opentelemetry-collector/suse-
 ENTRYPOINT ["/otelcol/otelcol-custom"]
 CMD ["--config", "/otelcol/collector-config.yaml"]
 
-EXPOSE 4317 4318 12001
+EXPOSE 4317 4318 13133 14250 14268

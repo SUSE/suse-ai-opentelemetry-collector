@@ -1,4 +1,5 @@
 # Binaries
+suse-ai-opentelemetry-collector/otelcol-custom
 suse-ai-opentelemetry-collector/suse-ai-opentelemetry-collector
 suse-ai-opentelemetry-collector/suse-ai-opentelemetry-collector_windows_amd64.exe
 suse-ai-opentelemetry-collector/suse-ai-opentelemetry-collector_darwin_amd64
@@ -9,6 +10,9 @@ vendor/
 *.exe
 *.test
 *.out
+
+# Python integration tests
+__pycache__/
 
 # Local agent tooling / generated plans
 .claude/

@@ -2,8 +2,10 @@ package topologyexporter
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net/http"
+	"sync"
 	"time"
 
 	"go.opentelemetry.io/collector/component"
@@ -21,10 +23,13 @@ const (
 )
 
 type topologyExporter struct {
-	cfg         *Config
-	accumulator *topologyAccumulator
-	client      *receiverClient
-	done        chan struct{}
+	cfg          *Config
+	accumulator  *topologyAccumulator
+	client       *receiverClient
+	done         chan struct{}
+	cancel       context.CancelFunc
+	shutdownOnce sync.Once
+	shutdownErr  error
 }
 
 func newTopologyExporter(cfg *Config) *topologyExporter {
@@ -41,19 +46,27 @@ func (e *topologyExporter) start(ctx context.Context, host component.Host) error
 		return err
 	}
 
-	transport := &http.Transport{}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
 	if tlsConfig != nil {
 		transport.TLSClientConfig = tlsConfig
 	}
-	httpClient := &http.Client{Transport: transport}
+	httpClient := &http.Client{
+		Transport: transport,
+		Timeout:   e.cfg.Timeout,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
 
 	instance := Instance{
 		Type: topologyInstanceType,
 		URL:  topologyStreamID,
 	}
-	e.client = newReceiverClient(e.cfg.Endpoint, e.cfg.APIKey, instance, httpClient)
+	e.client = newReceiverClient(e.cfg.Endpoint, string(e.cfg.APIKey), instance, httpClient)
 
-	go e.flushLoop()
+	loopCtx, cancel := context.WithCancel(context.Background())
+	e.cancel = cancel
+	go e.flushLoop(loopCtx)
 
 	slog.Info("topology exporter started",
 		"endpoint", e.cfg.Endpoint,
@@ -62,25 +75,26 @@ func (e *topologyExporter) start(ctx context.Context, host component.Host) error
 	return nil
 }
 
-func (e *topologyExporter) flushLoop() {
+func (e *topologyExporter) flushLoop(ctx context.Context) {
+	defer close(e.done)
 	ticker := time.NewTicker(e.cfg.FlushInterval)
 	defer ticker.Stop()
 
 	for {
 		select {
 		case <-ticker.C:
-			e.flush()
-		case <-e.done:
+			if err := e.flush(ctx); err != nil && !errors.Is(err, context.Canceled) {
+				slog.Warn("failed to flush topology", "error", err)
+			}
+		case <-ctx.Done():
 			return
 		}
 	}
 }
 
-func (e *topologyExporter) flush() {
+func (e *topologyExporter) flush(ctx context.Context) error {
 	components, relations := e.accumulator.snapshot()
-	if err := e.client.send(components, relations); err != nil {
-		slog.Warn("failed to flush topology", "error", err)
-	}
+	return e.client.send(ctx, components, relations)
 }
 
 func (e *topologyExporter) pushTraces(ctx context.Context, td ptrace.Traces) error {
@@ -89,7 +103,19 @@ func (e *topologyExporter) pushTraces(ctx context.Context, td ptrace.Traces) err
 }
 
 func (e *topologyExporter) shutdown(ctx context.Context) error {
-	close(e.done)
-	e.flush()
-	return nil
+	e.shutdownOnce.Do(func() {
+		if e.cancel == nil {
+			return
+		}
+		e.cancel()
+		defer e.client.httpClient.CloseIdleConnections()
+		select {
+		case <-e.done:
+			// Wait for the periodic request to finish before the final snapshot.
+			e.shutdownErr = e.flush(ctx)
+		case <-ctx.Done():
+			e.shutdownErr = ctx.Err()
+		}
+	})
+	return e.shutdownErr
 }

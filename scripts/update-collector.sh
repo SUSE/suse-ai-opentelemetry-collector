@@ -1,63 +1,56 @@
-#!/bin/bash
-set -e
+#!/usr/bin/env bash
+set -euo pipefail
 
-# Get latest version from GitHub API
-# We use the releases from opentelemetry-collector-releases as it's more direct for manifests
-LATEST_TAG=$(curl -s https://api.github.com/repos/open-telemetry/opentelemetry-collector-releases/releases/latest | jq -r .tag_name)
-VERSION_NO_V=${LATEST_TAG#v}
+cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.."
 
-echo "Latest version found: $LATEST_TAG"
-
-# URLs for the manifests
-K8S_MANIFEST_URL="https://raw.githubusercontent.com/open-telemetry/opentelemetry-collector-releases/main/distributions/otelcol-k8s/manifest.yaml"
-CONTRIB_MANIFEST_URL="https://raw.githubusercontent.com/open-telemetry/opentelemetry-collector-releases/main/distributions/otelcol-contrib/manifest.yaml"
-
-# Download manifests
-echo "Downloading manifests..."
-curl -sSL "$K8S_MANIFEST_URL" -o k8s_manifest.yaml
-curl -sSL "$CONTRIB_MANIFEST_URL" -o contrib_manifest.yaml
-
-# 1. Update builder-config.yaml
-echo "Updating builder-config.yaml..."
-# Start with k8s manifest and apply our customizations
-yq eval -i '
-  .dist.name = "suse-ai-opentelemetry-collector" |
-  .dist.description = "Minimal OTel Collector distribution for monitoring SUSE AI" |
-  .dist.output_path = "./suse-ai-opentelemetry-collector" |
-  del(.dist.module) |
-  del(.dist.version) |
-  del(.dist.build_tags)
-' k8s_manifest.yaml
-
-# Extract elasticsearchreceiver from contrib
-ES_RECEIVER=$(yq eval '.receivers[] | select(.gomod == "*elasticsearchreceiver*")' contrib_manifest.yaml)
-if [ -z "$ES_RECEIVER" ]; then
-  echo "Error: Could not find elasticsearchreceiver in contrib manifest"
+# An explicit tag makes updates reproducible; without one, use the latest release.
+COLLECTOR_TAG=${1:-$(curl -fsSL --retry 3 --connect-timeout 15 --max-time 60 \
+  https://api.github.com/repos/open-telemetry/opentelemetry-collector-releases/releases/latest | jq -er .tag_name)}
+if [[ ! "$COLLECTOR_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  echo "Expected a stable collector release tag, such as v0.160.0" >&2
   exit 1
 fi
 
-# Add the receiver to the manifest
-yq eval -i ".receivers += $(echo "$ES_RECEIVER" | yq eval -o=json -)" k8s_manifest.yaml
+UPDATE_TMP=$(mktemp -d)
+trap 'rm -rf -- "$UPDATE_TMP"' EXIT
+MANIFEST_BASE="https://raw.githubusercontent.com/open-telemetry/opentelemetry-collector-releases/$COLLECTOR_TAG/distributions"
+CONTRIB_MANIFEST="$UPDATE_TMP/contrib.yaml"
+export CONTRIB_MANIFEST
+export COLLECTOR_VERSION="${COLLECTOR_TAG#v}"
 
-# Add the topology exporter (local module)
-yq eval -i '.exporters += {"gomod": "github.com/suse/suse-ai-opentelemetry-collector/topologyexporter v0.0.0", "path": "./topologyexporter"}' k8s_manifest.yaml
+echo "Downloading manifests for $COLLECTOR_TAG..."
+curl -fsSL --retry 3 --connect-timeout 15 --max-time 60 \
+  "$MANIFEST_BASE/otelcol-k8s/manifest.yaml" -o "$UPDATE_TMP/builder.yaml"
+curl -fsSL --retry 3 --connect-timeout 15 --max-time 60 \
+  "$MANIFEST_BASE/otelcol-contrib/manifest.yaml" -o "$CONTRIB_MANIFEST"
+yq -e '.receivers[] | select(.gomod | contains("/elasticsearchreceiver "))' "$CONTRIB_MANIFEST" >/dev/null
 
-# Replace the current builder-config.yaml
-mv k8s_manifest.yaml builder-config.yaml
-rm contrib_manifest.yaml
+yq -i '
+  .dist.name = "suse-ai-opentelemetry-collector" |
+  .dist.description = "Minimal OTel Collector distribution for monitoring SUSE AI" |
+  .dist.output_path = "./suse-ai-opentelemetry-collector" |
+  .dist.version = strenv(COLLECTOR_VERSION) |
+  del(.dist.module, .dist.build_tags) |
+  .receivers += [load(strenv(CONTRIB_MANIFEST)).receivers[] | select(.gomod | contains("/elasticsearchreceiver "))] |
+  .exporters += [{"gomod": "github.com/suse/suse-ai-opentelemetry-collector/topologyexporter v0.0.0", "path": "./topologyexporter"}]
+' "$UPDATE_TMP/builder.yaml"
 
-# 2. Update Containerfile
-echo "Updating Containerfile..."
-sed -i "s|builder@v[0-9.]*|builder@$LATEST_TAG|g" Containerfile
+cp "$UPDATE_TMP/builder.yaml" builder-config.yaml
+sed -i "s|builder@v[0-9.]*|builder@$COLLECTOR_TAG|g" Containerfile
 
-# 3. Regenerate code
-echo "Installing builder..."
-go install "go.opentelemetry.io/collector/cmd/builder@$LATEST_TAG"
+go install "go.opentelemetry.io/collector/cmd/builder@$COLLECTOR_TAG"
+"${GOBIN:-$(go env GOPATH)/bin}/builder" --config builder-config.yaml
 
-echo "Running builder (skipping compilation)..."
-$(go env GOPATH)/bin/builder --config builder-config.yaml --skip-compilation
+# A newer builder can compile on an automatically downloaded Go toolchain while
+# the container still uses an older, fixed toolchain. Catch that before a PR.
+REQUIRED_GO=$(awk '/^go / {print $2; exit}' suse-ai-opentelemetry-collector/go.mod)
+IMAGE_GO=$(sed -n 's|^FROM dp.apps.rancher.io/containers/go:\([0-9.]*\).*|\1|p' Containerfile)
+if [[ -z "$IMAGE_GO" || "$(printf '%s\n' "$REQUIRED_GO" "$IMAGE_GO" | sort -V | head -n 1)" != "$REQUIRED_GO" ]]; then
+  echo "Update the Containerfile Go image to at least $REQUIRED_GO before publishing $COLLECTOR_TAG" >&2
+  exit 1
+fi
 
-# Clean up any leftover binary just in case
-rm -f ./suse-ai-opentelemetry-collector/suse-ai-opentelemetry-collector
-
-echo "Update process completed successfully."
+API_KEY=validation ELASTICSEARCH_PASSWORD=validation \
+  ./suse-ai-opentelemetry-collector/suse-ai-opentelemetry-collector validate --config collector-config.yaml
+./suse-ai-opentelemetry-collector/suse-ai-opentelemetry-collector --version
+echo "Collector $COLLECTOR_TAG built and configuration validated."

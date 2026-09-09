@@ -19,8 +19,11 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
-          go-version: '1.24'
+          go-version: '1.26.7'
           cache: true
+          cache-dependency-path: |
+            suse-ai-opentelemetry-collector/go.sum
+            topologyexporter/go.sum
 
       - name: Install yq
         run: |
@@ -31,6 +34,13 @@ jobs:
 
       - name: Run update script
         run: bash scripts/update-collector.sh
+
+      - name: Test updated collector
+        run: |
+          python3 -m pip install -r tests/requirements.txt
+          python3 tests/test_collector.py --collector ./suse-ai-opentelemetry-collector/suse-ai-opentelemetry-collector
+          cd suse-ai-opentelemetry-collector
+          go test -mod=readonly -race github.com/suse/suse-ai-opentelemetry-collector/topologyexporter
 
       - name: Create Pull Request
         uses: peter-evans/create-pull-request@22a9089034f40e5a961c8808d113e2c98fb63676 # v7

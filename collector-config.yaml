@@ -1,3 +1,9 @@
+# In-cluster configuration; deployment variables are documented in README.md.
+# Original signals are exported once; GenAI context uses standard OTel processors.
+# The downstream OTel collector supplies resource topology to sts_topo_opentelemetry_collector.
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
 receivers:
   otlp:
     protocols:
@@ -5,139 +11,287 @@ receivers:
         endpoint: 0.0.0.0:4317
       http:
         endpoint: 0.0.0.0:4318
-
+  jaeger:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:14250
+      thrift_http:
+        endpoint: 0.0.0.0:14268
   prometheus:
     config:
       scrape_configs:
-        - job_name: 'vllm'
-          scrape_interval: 10s
-          kubernetes_sd_configs:
-            - role: pod
-          relabel_configs:
-            - source_labels: [__meta_kubernetes_pod_label_app]
-              action: keep
-              regex: 'vllm'
-            - source_labels: [__meta_kubernetes_pod_container_port_number]
-              action: keep
-              regex: '8000'
-
-        - job_name: 'milvus'
-          scrape_interval: 15s
-          static_configs:
-            - targets: ['milvus.suse-ai.svc.cluster.local:9091']
-
-        - job_name: 'qdrant'
-          scrape_interval: 15s
-          static_configs:
-            - targets: ['qdrant.suse-ai.svc.cluster.local:6333']
-
-        - job_name: 'gpu-metrics'
-          scrape_interval: 10s
-          kubernetes_sd_configs:
-            - role: endpoints
-              namespaces:
-                names:
-                  - gpu-operator
-
+      - job_name: vllm
+        scrape_interval: 10s
+        kubernetes_sd_configs:
+        - role: service
+          namespaces:
+            names:
+            - ${env:SUSE_AI_NAMESPACE:-suse-private-ai}
+        relabel_configs:
+        - source_labels:
+          - __meta_kubernetes_service_name
+          action: keep
+          regex: .*vllm.*
+        - source_labels:
+          - __meta_kubernetes_service_port_number
+          action: keep
+          regex: ${env:VLLM_METRICS_PORT:-8000}
+        - source_labels:
+          - __meta_kubernetes_service_name
+          target_label: service_name
+        - source_labels:
+          - __meta_kubernetes_namespace
+          target_label: service_namespace
+        - target_label: gen_ai_system
+          replacement: vllm
+      - job_name: milvus
+        scrape_interval: 15s
+        metrics_path: /metrics
+        static_configs:
+        - targets:
+          - ${env:MILVUS_METRICS_ENDPOINT:-milvus.${env:SUSE_AI_NAMESPACE:-suse-private-ai}.svc.cluster.local:9091}
+          labels:
+            service_name: milvus
+            service_namespace: ${env:SUSE_AI_NAMESPACE:-suse-private-ai}
+            db_system: milvus
+      - job_name: qdrant
+        scrape_interval: 10s
+        metrics_path: /metrics
+        static_configs:
+        - targets:
+          - ${env:QDRANT_METRICS_ENDPOINT:-qdrant.${env:SUSE_AI_NAMESPACE:-suse-private-ai}.svc.cluster.local:6333}
+          labels:
+            service_name: qdrant
+            service_namespace: ${env:SUSE_AI_NAMESPACE:-suse-private-ai}
+            db_system: qdrant
+      - job_name: gpu-metrics
+        scrape_interval: 10s
+        kubernetes_sd_configs:
+        - role: endpoints
+          namespaces:
+            names:
+            - ${env:GPU_NAMESPACE:-gpu-operator}
+        relabel_configs:
+        - source_labels:
+          - __meta_kubernetes_service_name
+          action: keep
+          regex: .*dcgm-exporter.*
+        - source_labels:
+          - __address__
+          action: keep
+          regex: .*:${env:GPU_METRICS_PORT:-9400}
+        - source_labels:
+          - __meta_kubernetes_service_name
+          target_label: service_name
+        - source_labels:
+          - __meta_kubernetes_namespace
+          target_label: service_namespace
+        - target_label: hw_type
+          replacement: gpu
   elasticsearch:
-    endpoint: "http://opensearch.suse-ai.svc.cluster.local:9200"
-    collection_interval: 15s
-
+    endpoint: ${env:ELASTICSEARCH_ENDPOINT:-http://opensearch-cluster-master-headless.${env:SUSE_AI_NAMESPACE:-suse-private-ai}.svc.cluster.local:9200}
+    username: ${env:ELASTICSEARCH_USERNAME:-admin}
+    password: ${env:ELASTICSEARCH_PASSWORD}
+    tls:
+      insecure_skip_verify: false
+    collection_interval: 10s
+    metrics:
+      elasticsearch.node.fs.disk.total:
+        enabled: true
+      elasticsearch.node.fs.disk.available:
+        enabled: true
 processors:
   memory_limiter:
     check_interval: 1s
     limit_percentage: 80
     spike_limit_percentage: 25
-
   resource_detection:
-    # "k8s" is not a valid detector key; k8s pod/node metadata is added by
-    # k8s_attributes. env picks up OTEL_RESOURCE_ATTRIBUTES, system the host.
-    detectors: [env, system]
-
+    detectors:
+    - env
+    override: false
   k8s_attributes:
-    auth_type: "serviceAccount"
+    auth_type: serviceAccount
     passthrough: false
     extract:
       metadata:
-        - k8s.pod.name
-        - k8s.pod.uid
-        - k8s.namespace.name
-        - k8s.deployment.name
-        - k8s.statefulset.name
-        - k8s.daemonset.name
-        - k8s.cronjob.name
-        - k8s.job.name
-        - k8s.node.name
-
-  transform:
-    error_mode: ignore
-    trace_statements:
-      - context: span
-        statements:
-          # Normalization of legacy attributes to current GenAI semantic conventions
-          - set(attributes["gen_ai.provider.name"], attributes["GenAiSystem"]) where attributes["GenAiSystem"] != nil and attributes["gen_ai.provider.name"] == nil
-          - set(attributes["gen_ai.operation.name"], attributes["GenAiOperationName"]) where attributes["GenAiOperationName"] != nil
-          - set(attributes["gen_ai.request.model"], attributes["GenAiRequestModel"]) where attributes["GenAiRequestModel"] != nil
-          # Back-fill gen_ai.provider.name from the deprecated gen_ai.system attribute
-          - set(attributes["gen_ai.provider.name"], attributes["gen_ai.system"]) where attributes["gen_ai.provider.name"] == nil and attributes["gen_ai.system"] != nil
-          # Promotion of GenAI attributes to Resource level
-          - set(resource.attributes["gen_ai.provider.name"], attributes["gen_ai.provider.name"]) where attributes["gen_ai.provider.name"] != nil
-          # Aggregation of models (last one wins in this context, usually sufficient per trace segment)
-          - set(resource.attributes["gen_ai.models"], attributes["gen_ai.request.model"]) where attributes["gen_ai.request.model"] != nil
-
-    metric_statements:
-      - context: datapoint
-        statements:
-          # Back-fill gen_ai.provider.name from the deprecated gen_ai.system attribute
-          - set(attributes["gen_ai.provider.name"], attributes["gen_ai.system"]) where attributes["gen_ai.provider.name"] == nil and attributes["gen_ai.system"] != nil
-          # Promotion of GenAI attributes to Resource level for metrics
-          - set(resource.attributes["gen_ai.provider.name"], attributes["gen_ai.provider.name"]) where attributes["gen_ai.provider.name"] != nil
-          # Promotion of DB identity to Resource level (db.system.name is the current key; fall back to deprecated db.system)
-          - set(resource.attributes["db.system.name"], attributes["db.system.name"]) where attributes["db.system.name"] != nil
-          - set(resource.attributes["db.system.name"], attributes["db.system"]) where resource.attributes["db.system.name"] == nil and attributes["db.system"] != nil
-          # Handle vLLM metrics (explicitly NOT renaming vllm: as requested)
-
+      - k8s.pod.name
+      - k8s.pod.uid
+      - k8s.namespace.name
+      - k8s.deployment.name
+      - k8s.statefulset.name
+      - k8s.daemonset.name
+      - k8s.cronjob.name
+      - k8s.job.name
+      - k8s.node.name
+    pod_association:
+    - sources:
+      - from: resource_attribute
+        name: k8s.pod.uid
+    - sources:
+      - from: resource_attribute
+        name: k8s.pod.ip
+    - sources:
+      - from: connection
   resource:
     attributes:
-      - key: service.namespace
-        value: "suse-ai"
-        action: upsert
-      # Cluster identity from the deployment environment. k8sattributes cannot
-      # provide k8s.cluster.name, so it is sourced from an env var.
-      - key: k8s.cluster.name
-        value: ${env:K8S_CLUSTER_NAME}
-        action: insert
-      # Standardize identity (first non-nil source wins via insert)
-      - key: suse.ai.component
-        from_attribute: gen_ai.provider.name
-        action: insert
-      - key: suse.ai.component
-        from_attribute: db.system.name
-        action: insert
-
+    - key: k8s.cluster.name
+      value: ${env:K8S_CLUSTER_NAME:-local}
+      action: insert
+    - key: service.instance.id
+      from_attribute: k8s.pod.uid
+      action: insert
+    - key: service.namespace
+      from_attribute: k8s.namespace.name
+      action: insert
+    - key: service.namespace
+      value: ${env:SUSE_AI_NAMESPACE:-suse-private-ai}
+      action: insert
+  transform/genai-normalize:
+    error_mode: ignore
+    trace_statements:
+    - context: span
+      statements:
+      - set(attributes["gen_ai.system"], attributes["GenAiSystem"]) where attributes["gen_ai.system"] == nil and attributes["GenAiSystem"] != nil
+      - set(attributes["gen_ai.provider.name"], attributes["gen_ai.system"]) where attributes["gen_ai.provider.name"] == nil and attributes["gen_ai.system"] != nil
+      - set(attributes["gen_ai.operation.name"], attributes["GenAiOperationName"]) where attributes["gen_ai.operation.name"] == nil and attributes["GenAiOperationName"] != nil
+      - set(attributes["gen_ai.request.model"], attributes["GenAiRequestModel"]) where attributes["gen_ai.request.model"] == nil and attributes["GenAiRequestModel"] != nil
+      - set(attributes["db.system.name"], attributes["db.system"]) where attributes["db.system.name"] == nil and attributes["db.system"] != nil
+      - set(attributes["db.system"], attributes["db.system.name"]) where attributes["db.system"] == nil and attributes["db.system.name"] != nil
+      - set(resource.attributes["gen_ai.system"], attributes["gen_ai.system"]) where resource.attributes["gen_ai.system"] == nil and attributes["gen_ai.system"] != nil
+      - set(resource.attributes["gen_ai.provider.name"], attributes["gen_ai.provider.name"]) where resource.attributes["gen_ai.provider.name"] == nil and attributes["gen_ai.provider.name"] != nil
+      - set(resource.attributes["gen_ai.models"], attributes["gen_ai.request.model"]) where (resource.attributes["gen_ai.models"] == nil or resource.attributes["gen_ai.models"] == "") and IsString(attributes["gen_ai.request.model"])
+        and attributes["gen_ai.request.model"] != ""
+      - set(resource.attributes["gen_ai.models"], Concat([resource.attributes["gen_ai.models"], attributes["gen_ai.request.model"]], ",")) where IsString(resource.attributes["gen_ai.models"]) and IsString(attributes["gen_ai.request.model"])
+        and attributes["gen_ai.request.model"] != "" and not ContainsValue(Split(resource.attributes["gen_ai.models"], ","), attributes["gen_ai.request.model"])
+    - context: resource
+      statements:
+      - set(attributes["gen_ai.provider.name"], attributes["gen_ai.system"]) where attributes["gen_ai.provider.name"] == nil and attributes["gen_ai.system"] != nil
+    metric_statements:
+    - context: resource
+      statements:
+      - set(attributes["db.system.name"], attributes["db.system"]) where attributes["db.system.name"] == nil and attributes["db.system"] != nil
+      - set(attributes["db.system"], attributes["db.system.name"]) where attributes["db.system"] == nil and attributes["db.system.name"] != nil
+    - context: datapoint
+      statements:
+      - set(attributes["gen_ai.system"], attributes["GenAiSystem"]) where attributes["gen_ai.system"] == nil and attributes["GenAiSystem"] != nil
+      - set(attributes["gen_ai.provider.name"], attributes["gen_ai.system"]) where attributes["gen_ai.provider.name"] == nil and attributes["gen_ai.system"] != nil
+      - set(attributes["gen_ai.operation.name"], attributes["GenAiOperationName"]) where attributes["gen_ai.operation.name"] == nil and attributes["GenAiOperationName"] != nil
+      - set(attributes["gen_ai.request.model"], attributes["GenAiRequestModel"]) where attributes["gen_ai.request.model"] == nil and attributes["GenAiRequestModel"] != nil
+      - set(attributes["gen_ai.request.model"], attributes["model_name"]) where attributes["gen_ai.request.model"] == nil and resource.attributes["gen_ai.system"] == "vllm" and attributes["model_name"]
+        != nil
+      - set(resource.attributes["gen_ai.system"], attributes["gen_ai.system"]) where resource.attributes["gen_ai.system"] == nil and attributes["gen_ai.system"] != nil
+      - set(resource.attributes["gen_ai.provider.name"], attributes["gen_ai.provider.name"]) where resource.attributes["gen_ai.provider.name"] == nil and attributes["gen_ai.provider.name"] != nil
+      - set(resource.attributes["db.system.name"], attributes["db.system.name"]) where resource.attributes["db.system.name"] == nil and attributes["db.system.name"] != nil
+      - set(resource.attributes["db.system.name"], attributes["db.system"]) where resource.attributes["db.system.name"] == nil and attributes["db.system"] != nil
+      - set(resource.attributes["db.system"], resource.attributes["db.system.name"]) where resource.attributes["db.system"] == nil and resource.attributes["db.system.name"] != nil
+      - set(attributes["service_name"], resource.attributes["service.name"]) where attributes["service_name"] == nil and resource.attributes["service.name"] != nil
+      - set(resource.attributes["gen_ai.models"], attributes["gen_ai.request.model"]) where (resource.attributes["gen_ai.models"] == nil or resource.attributes["gen_ai.models"] == "") and IsString(attributes["gen_ai.request.model"])
+        and attributes["gen_ai.request.model"] != ""
+      - set(resource.attributes["gen_ai.models"], Concat([resource.attributes["gen_ai.models"], attributes["gen_ai.request.model"]], ",")) where IsString(resource.attributes["gen_ai.models"]) and IsString(attributes["gen_ai.request.model"])
+        and attributes["gen_ai.request.model"] != "" and not ContainsValue(Split(resource.attributes["gen_ai.models"], ","), attributes["gen_ai.request.model"])
+    - context: resource
+      statements:
+      - set(attributes["gen_ai.provider.name"], attributes["gen_ai.system"]) where attributes["gen_ai.provider.name"] == nil and attributes["gen_ai.system"] != nil
+  transform/prometheus:
+    error_mode: ignore
+    metric_statements:
+    - context: datapoint
+      statements:
+      - set(resource.attributes["service.name"], attributes["service_name"]) where attributes["service_name"] != nil
+      - set(resource.attributes["service.namespace"], attributes["service_namespace"]) where attributes["service_namespace"] != nil
+      - set(resource.attributes["k8s.namespace.name"], attributes["service_namespace"]) where attributes["service_namespace"] != nil
+      - set(resource.attributes["hw.type"], attributes["hw_type"]) where attributes["hw_type"] != nil
+      - set(resource.attributes["gen_ai.system"], attributes["gen_ai_system"]) where resource.attributes["gen_ai.system"] == nil and attributes["gen_ai_system"] != nil
+      - set(resource.attributes["db.system"], attributes["db_system"]) where resource.attributes["db.system"] == nil and attributes["db_system"] != nil
+  resource/elasticsearch:
+    attributes:
+    - key: service.name
+      value: ${env:ELASTICSEARCH_SERVICE_NAME:-opensearch}
+      action: insert
+    - key: service.namespace
+      value: ${env:SUSE_AI_NAMESPACE:-suse-private-ai}
+      action: insert
+    - key: db.system.name
+      value: ${env:ELASTICSEARCH_SYSTEM:-opensearch}
+      action: insert
   batch:
     send_batch_size: 1000
-    timeout: 10s
-
+    timeout: 1s
 exporters:
-  debug:
-    verbosity: basic
   otlp:
-    endpoint: "suse-observability-otel-collector.observability.svc.cluster.local:4317"
+    endpoint: ${env:OTLP_ENDPOINT:-suse-observability-otel-collector.suse-observability.svc.cluster.local:4317}
+    headers:
+      Authorization: SUSEObservability ${env:API_KEY}
     tls:
-      insecure: true
-
+      insecure: ${env:OTLP_INSECURE:-true}
+connectors:
+  span_metrics:
+    metrics_expiration: 5m
+    namespace: otel_span
+    dimensions:
+    - name: gen_ai.provider.name
+    - name: gen_ai.request.model
 service:
+  extensions:
+  - health_check
   pipelines:
     traces:
-      receivers: [otlp]
-      processors: [memory_limiter, resource_detection, k8s_attributes, transform, resource, batch]
-      exporters: [debug, otlp]
+      receivers:
+      - otlp
+      - jaeger
+      processors:
+      - memory_limiter
+      - resource_detection
+      - k8s_attributes
+      - resource
+      - transform/genai-normalize
+      - batch
+      exporters:
+      - otlp
+      - span_metrics
     metrics:
-      receivers: [otlp, prometheus, elasticsearch]
-      processors: [memory_limiter, resource_detection, k8s_attributes, transform, resource, batch]
-      exporters: [debug, otlp]
+      receivers:
+      - otlp
+      - span_metrics
+      processors:
+      - memory_limiter
+      - resource_detection
+      - k8s_attributes
+      - resource
+      - transform/genai-normalize
+      - batch
+      exporters:
+      - otlp
+    metrics/prometheus:
+      receivers:
+      - prometheus
+      processors:
+      - memory_limiter
+      - transform/prometheus
+      - resource
+      - transform/genai-normalize
+      - batch
+      exporters:
+      - otlp
+    metrics/elasticsearch:
+      receivers:
+      - elasticsearch
+      processors:
+      - memory_limiter
+      - resource/elasticsearch
+      - resource
+      - transform/genai-normalize
+      - batch
+      exporters:
+      - otlp
     logs:
-      receivers: [otlp]
-      processors: [memory_limiter, resource_detection, k8s_attributes, transform, resource, batch]
-      exporters: [debug, otlp]
+      receivers:
+      - otlp
+      processors:
+      - memory_limiter
+      - resource_detection
+      - k8s_attributes
+      - resource
+      - batch
+      exporters:
+      - otlp

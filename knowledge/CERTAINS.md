@@ -4,6 +4,8 @@ Verified on 2026-09-09 on `fix/collector-v0.160.0-release`, based on `5051b29781
 
 - The topology-retention branch is already merged into `main` through PR #26.
 - GitHub showed no open PRs before this release-preparation PR. PRs #25, #28, and #31 were already merged. Dependabot closed #32 and #33 as superseded: the generated collector already requires gRPC v1.83.2 and Thrift v0.24.0.
+- The release-preparation work is submitted in [PR #34](https://github.com/SUSE/suse-ai-opentelemetry-collector/pull/34).
+- The standalone exporter module is also aligned to gRPC v1.83.2 to address [CVE-2026-84445](https://github.com/grpc/grpc-go/security/advisories/GHSA-2v4p-qf9q-27wj), reported by Dependabot alert #40 on main's v1.83.1 requirement. The generated collector already selected the patched version.
 - The latest upstream collector release checked on 2026-09-09 is [v0.160.0](https://github.com/open-telemetry/opentelemetry-collector-releases/releases/tag/v0.160.0). This repository's latest published release is v0.156.0; v0.160.0 is unused and is the intended next release tag.
 - The builder manifest sets distribution version `0.160.0`, the updater derives it from the selected release tag, and the regenerated executable reports `suse-ai-opentelemetry-collector version 0.160.0`. The prior empty version made `--version` unavailable. A seventh integration test checks the binary against the manifest.
 - The generated collector uses OTel components v0.160.0 and declares Go 1.26.0. The container and CI now use Go 1.26.7. The amd64 container builds successfully and validates its packaged configuration as user 10001.

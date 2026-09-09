@@ -51,11 +51,13 @@ GitHub returned zero open PRs before creating the release-preparation PR. The re
 | --- | --- |
 | [#25](https://github.com/SUSE/suse-ai-opentelemetry-collector/pull/25) | Configuration update already merged; the corrections above address its remaining resource-identity defects. |
 | [#28](https://github.com/SUSE/suse-ai-opentelemetry-collector/pull/28) | Collector v0.160.0 update already merged; its component and dependency changes remain included. |
-| [#31](https://github.com/SUSE/suse-ai-opentelemetry-collector/pull/31) | Exporter gRPC v1.83.1 update already merged and covered by the exporter tests. |
+| [#31](https://github.com/SUSE/suse-ai-opentelemetry-collector/pull/31) | Exporter gRPC v1.83.1 update already merged. This PR advances the standalone exporter to patched v1.83.2, matching the generated collector, and reruns its tests. |
 | [#32](https://github.com/SUSE/suse-ai-opentelemetry-collector/pull/32) | Dependabot already closed the generated-collector gRPC v1.83.1 proposal; the module now selects v1.83.2. Applying it would downgrade the dependency. |
 | [#33](https://github.com/SUSE/suse-ai-opentelemetry-collector/pull/33) | Dependabot already closed the Thrift v0.24.0 proposal; that version is present in the generated collector. |
 
 No additional PR closure or cherry-pick was needed. Upstream's latest release is [v0.160.0](https://github.com/open-telemetry/opentelemetry-collector-releases/releases/tag/v0.160.0), checked on 2026-09-09; this repository's latest release is v0.156.0. The intended next tag, v0.160.0, does not yet exist.
+
+The current work is submitted in [PR #34](https://github.com/SUSE/suse-ai-opentelemetry-collector/pull/34). Review also found Dependabot alert #40 against the standalone exporter's gRPC v1.83.1 requirement: [CVE-2026-84445](https://github.com/grpc/grpc-go/security/advisories/GHSA-2v4p-qf9q-27wj), an xDS-server denial of service fixed in v1.83.2. The exporter module is now aligned to v1.83.2 and tidied, including its required transitive updates. The compiled collector already used those dependency versions, so this does not change the dependency versions in the tested candidate image. The alert remains attached to main until the fix is merged and GitHub reevaluates its dependency graph.
 
 Release preparation also found an empty distribution version in the generated executable, which made `--version` fail. The manifest now sets `0.160.0`; the updater embeds the selected tag's version and regenerates the entry point. Regeneration changed no dependency files. All seven integration cases, including a new binary-versus-manifest version check, pass against both the regenerated executable and the binary extracted from the release candidate image.
 

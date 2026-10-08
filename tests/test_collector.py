@@ -44,6 +44,8 @@ vllm:latency_seconds_bucket{le="0.5",model_name="llama3"} 2
 vllm:latency_seconds_bucket{le="+Inf",model_name="llama3"} 4
 vllm:latency_seconds_sum{model_name="llama3"} 3
 vllm:latency_seconds_count{model_name="llama3"} 4
+# TYPE DCGM_FI_DEV_GPU_UTIL gauge
+DCGM_FI_DEV_GPU_UTIL{namespace="workload-ns",pod="inference-pod",container="vllm"} 42
 '''
         self.send_response(200)
         self.send_header("Content-Type", "text/plain; version=0.0.4")
@@ -81,6 +83,7 @@ class CollectorIntegration(unittest.TestCase):
         targets = [f"127.0.0.1:{s.server_port}" for s in cls.servers]
         cls.targets = targets
         cls.env["GPU_METRICS_PORT"] = str(cls.servers[0].server_port)
+        cls.env['VLLM_METRICS_PORT'] = '(' + '|'.join(str(s.server_port) for s in cls.servers) + ')'
         config = copy.deepcopy(cls.original)
         cls.port, cls.es_port = free_port(), free_port()
         config["receivers"]["otlp"] = {"protocols": {"http": {"endpoint": f"127.0.0.1:{cls.port}"}}}
@@ -93,10 +96,12 @@ class CollectorIntegration(unittest.TestCase):
                 job.pop("kubernetes_sd_configs")
                 is_vllm = job["job_name"] == "vllm"
                 labels = {"__meta_kubernetes_service_name": "my-vllm" if is_vllm else "nvidia-dcgm-exporter",
-                          "__meta_kubernetes_service_port_number": "8000",
                           "__meta_kubernetes_namespace": "ai-test" if is_vllm else "gpu-test"}
                 discovery = cls.directory / (job["job_name"] + ".json")
-                discovery.write_text(json.dumps([{"targets": targets if is_vllm else targets[:1], "labels": labels}]))
+                discovery.write_text(json.dumps([
+                    {"targets": [target], "labels": {**labels, '__meta_kubernetes_pod_uid': f'pod-{index}',
+                                                     '__meta_kubernetes_pod_node_name': f'node-{index}'}}
+                    for index, target in enumerate(targets if is_vllm else targets[:1])]))
                 job["file_sd_configs"] = [{"files": [str(discovery)]}]
             else:
                 for group in job["static_configs"]:
@@ -107,6 +112,8 @@ class CollectorIntegration(unittest.TestCase):
         config["extensions"]["health_check"]["endpoint"] = f"127.0.0.1:{free_port()}"
         cls.health = "http://" + config["extensions"]["health_check"]["endpoint"]
         config["service"]["telemetry"] = {"metrics": {"level": "none"}}
+        config['connectors']['service_graph/suse_ai']['metrics_flush_interval'] = '1s'
+        config['connectors']['span_metrics']['metrics_flush_interval'] = '1s'
         config["exporters"] = {}
         cls.outputs = {}
         for name, pipeline in config["service"]["pipelines"].items():
@@ -218,6 +225,12 @@ class CollectorIntegration(unittest.TestCase):
             for key, value in original.items():
                 if key != "gen_ai.models":
                     self.assertEqual(values[key], value)
+            if 'k8s.pod.uid' in values:
+                self.assertEqual(values['k8s.cluster.name'], 'test-cluster')
+                self.assertEqual(values['service.instance.id'], 'pod-uid')
+            else:
+                self.assertNotIn('k8s.cluster.name', values)
+                self.assertNotIn('k8s.namespace.name', values)
             for span in relevant:
                 seen[span["traceId"], span["spanId"]] += 1
                 self.assertEqual(unpack(span["attributes"])["peer.service"], "original-peer")
@@ -278,14 +291,22 @@ class CollectorIntegration(unittest.TestCase):
             name = values["service.name"]
             self.assertEqual(values["service.namespace"], "gpu-test" if name == "nvidia-dcgm-exporter" else "ai-test")
             if name == "my-vllm":
+                self.assertEqual(values['suse.ai.product'], 'vllm')
+                self.assertEqual(values['k8s.cluster.name'], 'test-cluster')
+                self.assertEqual(values['service.instance.id'], values['k8s.pod.uid'])
                 self.assertEqual(values["gen_ai.system"], "vllm")
                 self.assertEqual(values["gen_ai.provider.name"], "vllm")
                 vllm_instances.add(values["service.instance.id"])
             elif name in ("milvus", "qdrant"):
+                self.assertEqual(values['suse.ai.product'], name)
+                self.assertNotIn('k8s.cluster.name', values,
+                                 'Static remote scrape targets do not prove Kubernetes identity')
                 self.assertEqual(values["db.system"], name)
                 self.assertEqual(values["db.system.name"], name)
             else:
                 self.assertEqual(values["hw.type"], "gpu")
+                self.assertEqual(values['k8s.cluster.name'], 'test-cluster')
+                self.assertEqual(values['k8s.node.name'], 'node-0')
                 self.assertNotIn("gen_ai.system", values)
             for scope in row["scopeMetrics"]:
                 for metric in scope["metrics"]:
@@ -295,10 +316,14 @@ class CollectorIntegration(unittest.TestCase):
                             self.assertEqual(labels["service_name"], name)
                             if name == "my-vllm" and "model_name" in labels:
                                 self.assertEqual(labels["gen_ai.request.model"], "llama3")
+                            if name == 'nvidia-dcgm-exporter' and metric['name'] == 'DCGM_FI_DEV_GPU_UTIL':
+                                self.assertEqual(labels['pod_namespace'], 'workload-ns')
+                                self.assertEqual(labels['pod_name'], 'inference-pod')
+                                self.assertEqual(labels['container_name'], 'vllm')
                     if name == "my-vllm" and metric["name"].startswith("vllm:") and "histogram" in metric:
                         histogram_seen = True
                         self.assertEqual(int(metric["histogram"]["dataPoints"][0]["count"]), 4)
-        self.assertEqual(vllm_instances, set(self.targets))
+        self.assertEqual(vllm_instances, {'pod-0', 'pod-1'})
         self.assertTrue(histogram_seen, "native latency histograms must survive normalization")
 
     def test_logs_preserve_source(self):
@@ -310,6 +335,7 @@ class CollectorIntegration(unittest.TestCase):
         values = unpack(rows[0]["resource"]["attributes"])
         for key, value in original.items():
             self.assertEqual(values[key], value)
+        self.assertNotIn('k8s.cluster.name', values)
 
     def test_elasticsearch_resource_identity(self):
         self.send("metrics", {"resourceMetrics": [{"resource": {"attributes": attributes({"elasticsearch.node.name": "node-a"})},
@@ -321,7 +347,62 @@ class CollectorIntegration(unittest.TestCase):
         self.assertEqual(values["service.namespace"], "ai-test")
         self.assertEqual(values["db.system"], "opensearch")
         self.assertEqual(values["db.system.name"], "opensearch")
+        self.assertEqual(values['suse.ai.product'], 'opensearch')
         self.assertEqual(values["elasticsearch.node.name"], "node-a")
+
+    def test_relationship_observations_and_span_metric_units(self):
+        now = time.time_ns()
+        client = {'traceId': 'd' * 32, 'spanId': 'd' * 16, 'name': 'chat remote', 'kind': 3,
+                  'startTimeUnixNano': str(now - 100000000), 'endTimeUnixNano': str(now),
+                  'attributes': attributes({'gen_ai.system': 'openai', 'gen_ai.request.model': 'remote-model',
+                                            'server.address': 'inference.example', 'server.port': '443'})}
+        server = {'traceId': 'd' * 32, 'spanId': 'e' * 16, 'parentSpanId': 'd' * 16,
+                  'name': 'POST /chat', 'kind': 2,
+                  'startTimeUnixNano': str(now - 90000000), 'endTimeUnixNano': str(now)}
+        self.send('traces', {'resourceSpans': [
+            {'resource': {'attributes': attributes({'service.name': 'relation-client', 'service.namespace': 'front',
+                'service.instance.id': 'client-1'})}, 'scopeSpans': [{'spans': [client]}]},
+            {'resource': {'attributes': attributes({'service.name': 'relation-server', 'service.namespace': 'back',
+                'service.instance.id': 'server-1'})}, 'scopeSpans': [{'spans': [server]}]},
+        ]})
+        def observations():
+            result = []
+            for row in self.resources('metrics/suse_ai_observations', 'resourceMetrics'):
+                for scope in row['scopeMetrics']:
+                    for metric in scope['metrics']:
+                        result.append((unpack(row.get('resource', {}).get('attributes', [])), metric))
+            return result
+        self.wait_for(lambda: {'suse.ai.model.observations', 'suse.ai.service.calls'} <=
+                      {m['name'] for _, m in observations()}, 'relationship observations')
+        model = [(r, m) for r, m in observations() if r.get('service.name') == 'relation-client'
+                 and m['name'] == 'suse.ai.model.observations']
+        self.assertEqual(len(model), 1)
+        self.assertNotIn('k8s.cluster.name', model[0][0])
+        point = model[0][1]['gauge']['dataPoints'][0]
+        self.assertEqual(unpack(point['attributes']), {'gen_ai.provider.name': 'openai',
+            'gen_ai.request.model': 'remote-model', 'server.address': 'inference.example', 'server.port': '443'})
+        calls = [unpack(dp['attributes']) for _, m in observations() if m['name'] == 'suse.ai.service.calls'
+                 for dp in m['gauge']['dataPoints']]
+        self.assertTrue(any(c.get('client') == 'relation-client' and c.get('server') == 'relation-server'
+                        and c['client_service.namespace'] == 'front' and c['server_service.namespace'] == 'back'
+                        for c in calls), calls)
+        def durations():
+            return [m for row in self.resources('metrics', 'resourceMetrics')
+                    if unpack(row.get('resource', {}).get('attributes', [])).get('service.name') == 'relation-client'
+                    for scope in row['scopeMetrics'] for m in scope['metrics']
+                    if m['name'] == 'otel_span.duration']
+        duration = self.wait_for(durations, 'duration histogram')[0]
+        self.assertEqual(duration['unit'], 's')
+        self.assertAlmostEqual(duration['histogram']['dataPoints'][0]['sum'], 0.1)
+        labels = unpack(duration['histogram']['dataPoints'][0]['attributes'])
+        self.assertEqual(labels['service.namespace'], 'front')
+        self.assertEqual(labels['service.instance.id'], 'client-1')
+        time.sleep(3)  # Observe multiple idle service-graph flushes.
+        call_points = [dp for _, m in observations() if m['name'] == 'suse.ai.service.calls'
+                       for dp in m['gauge']['dataPoints']
+                       if unpack(dp['attributes']).get('client') == 'relation-client']
+        self.assertEqual(sum(int(dp['asInt']) for dp in call_points), 1,
+                         'Cached service-graph counters must not refresh an idle relationship')
 
 
 if __name__ == "__main__":

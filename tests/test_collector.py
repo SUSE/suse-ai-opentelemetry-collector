@@ -372,15 +372,16 @@ class CollectorIntegration(unittest.TestCase):
                     for metric in scope['metrics']:
                         result.append((unpack(row.get('resource', {}).get('attributes', [])), metric))
             return result
-        self.wait_for(lambda: {'suse.ai.model.observations', 'suse.ai.service.calls'} <=
-                      {m['name'] for _, m in observations()}, 'relationship observations')
-        model = [(r, m) for r, m in observations() if r.get('service.name') == 'relation-client'
-                 and m['name'] == 'suse.ai.model.observations']
-        self.assertEqual(len(model), 1)
-        self.assertNotIn('k8s.cluster.name', model[0][0])
-        point = model[0][1]['gauge']['dataPoints'][0]
-        self.assertEqual(unpack(point['attributes']), {'gen_ai.provider.name': 'openai',
-            'gen_ai.request.model': 'remote-model', 'server.address': 'inference.example', 'server.port': '443'})
+        self.wait_for(lambda: 'suse.ai.service.calls' in
+                      {m['name'] for _, m in observations()}, 'service-call observations')
+        self.assertNotIn('suse.ai.model.observations', {m['name'] for _, m in observations()})
+        traces = [r for r in self.resources('traces', 'resourceSpans')
+                  if unpack(r['resource']['attributes']).get('service.name') == 'relation-client']
+        self.assertTrue(traces)
+        self.assertNotIn('k8s.cluster.name', unpack(traces[0]['resource']['attributes']))
+        exported = [s for r in traces for scope in r['scopeSpans'] for s in scope['spans']]
+        self.assertEqual(len(exported), 1)
+        self.assertEqual(unpack(exported[0]['attributes'])['gen_ai.request.model'], 'remote-model')
         calls = [unpack(dp['attributes']) for _, m in observations() if m['name'] == 'suse.ai.service.calls'
                  for dp in m['gauge']['dataPoints']]
         self.assertTrue(any(c.get('client') == 'relation-client' and c.get('server') == 'relation-server'

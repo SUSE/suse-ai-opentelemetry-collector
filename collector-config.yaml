@@ -251,7 +251,7 @@ processors:
     error_mode: propagate
     metrics:
       metric:
-      - name != "suse.ai.model.observations" and name != "traces_service_graph_request_total"
+      - name != "traces_service_graph_request_total"
   cumulativetodelta/suse_ai_calls:
     include:
       metrics: [traces_service_graph_request_total]
@@ -269,7 +269,7 @@ processors:
     - context: metric
       statements:
       - set(metric.name, "suse.ai.service.calls") where metric.name == "traces_service_graph_request_total"
-      - convert_sum_to_gauge() where metric.name == "suse.ai.model.observations" or metric.name == "suse.ai.service.calls"
+      - convert_sum_to_gauge() where metric.name == "suse.ai.service.calls"
   batch:
     send_batch_size: 1000
     timeout: 1s
@@ -281,21 +281,6 @@ exporters:
     tls:
       insecure: ${env:OTLP_INSECURE:-true}
 connectors:
-  count/suse_ai_models:
-    spans:
-      suse.ai.model.observations:
-        description: Observed model spans; topology evidence, not an inference request
-          counter.
-        conditions:
-        - IsString(span.attributes["gen_ai.request.model"]) and span.attributes["gen_ai.request.model"]
-          != "" and IsString(span.attributes["gen_ai.provider.name"])
-        attributes:
-        - key: gen_ai.provider.name
-        - key: gen_ai.request.model
-        - key: server.address
-          default_value: ''
-        - key: server.port
-          default_value: ''
   service_graph/suse_ai:
     dimensions:
     - service.namespace
@@ -337,10 +322,9 @@ service:
       exporters:
       - otlp
       - span_metrics
-      - count/suse_ai_models
       - service_graph/suse_ai
     metrics/suse_ai_observations:
-      receivers: [count/suse_ai_models, service_graph/suse_ai]
+      receivers: [service_graph/suse_ai]
       processors: [memory_limiter, filter/suse_ai_observations, cumulativetodelta/suse_ai_calls, filter/suse_ai_idle_calls, transform/suse_ai_observations, batch]
       exporters: [otlp]
     metrics:

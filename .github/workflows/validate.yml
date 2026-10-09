@@ -5,6 +5,7 @@ on:
     paths:
       - 'builder-config.yaml'
       - 'collector-config.yaml'
+      - 'litellm-receiver.yaml'
       - 'Containerfile'
       - 'suse-ai-opentelemetry-collector/**'
       - 'topologyexporter/**'
@@ -16,6 +17,7 @@ on:
     paths:
       - 'builder-config.yaml'
       - 'collector-config.yaml'
+      - 'litellm-receiver.yaml'
       - 'Containerfile'
       - 'suse-ai-opentelemetry-collector/**'
       - 'topologyexporter/**'

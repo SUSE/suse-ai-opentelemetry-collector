@@ -37,6 +37,15 @@ def unpack(items):
 
 class MetricsHandler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
+        if self.path == "/metrics/":
+            body = b'''# TYPE litellm_guardrail_requests_total counter
+litellm_guardrail_requests_total{guardrail_name="prompt-policy",status="error",hook_type="pre_call"} 2
+'''
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain; version=0.0.4")
+            self.end_headers()
+            self.wfile.write(body)
+            return
         body = b'''# TYPE vllm:requests_total counter
 vllm:requests_total{model_name="llama3"} 4
 # TYPE vllm:latency_seconds histogram
@@ -64,11 +73,17 @@ class CollectorIntegration(unittest.TestCase):
         cls.directory = Path(cls.temp.name)
         cls.env = dict(os.environ, API_KEY="test-key", ELASTICSEARCH_PASSWORD="test-password",
                        K8S_CLUSTER_NAME="test-cluster", SUSE_AI_NAMESPACE="ai-test",
-                       GPU_NAMESPACE="gpu-test", VLLM_METRICS_PORT="8000", OTEL_RESOURCE_ATTRIBUTES="")
+                       GPU_NAMESPACE="gpu-test", VLLM_METRICS_PORT="8000", OTEL_RESOURCE_ATTRIBUTES="",
+                       LITELLM_NAMESPACE="ai-test")
         for key in ("MILVUS_METRICS_ENDPOINT", "QDRANT_METRICS_ENDPOINT", "ELASTICSEARCH_ENDPOINT"):
             cls.env.pop(key, None)
         cls.original = yaml.safe_load((ROOT / "collector-config.yaml").read_text())
         result = subprocess.run([OPTIONS.collector, "validate", "--config", str(ROOT / "collector-config.yaml")],
+                                env=cls.env, capture_output=True, text=True, timeout=30)
+        if result.returncode:
+            raise AssertionError(result.stdout + result.stderr)
+        result = subprocess.run([OPTIONS.collector, "validate", "--config", str(ROOT / "collector-config.yaml"),
+                                 "--config", str(ROOT / "litellm-receiver.yaml")],
                                 env=cls.env, capture_output=True, text=True, timeout=30)
         if result.returncode:
             raise AssertionError(result.stdout + result.stderr)
@@ -85,6 +100,11 @@ class CollectorIntegration(unittest.TestCase):
         cls.env["GPU_METRICS_PORT"] = str(cls.servers[0].server_port)
         cls.env['VLLM_METRICS_PORT'] = '(' + '|'.join(str(s.server_port) for s in cls.servers) + ')'
         config = copy.deepcopy(cls.original)
+        overlay = yaml.safe_load((ROOT / "litellm-receiver.yaml").read_text())
+        for section in ("receivers", "processors"):
+            config[section].update(overlay[section])
+        config["service"]["pipelines"].update(overlay["service"]["pipelines"])
+        cls.env["LITELLM_METRICS_PORT"] = cls.env["VLLM_METRICS_PORT"]
         cls.port, cls.es_port = free_port(), free_port()
         config["receivers"]["otlp"] = {"protocols": {"http": {"endpoint": f"127.0.0.1:{cls.port}"}}}
         config["receivers"]["otlp/elasticsearch-test"] = {"protocols": {"http": {"endpoint": f"127.0.0.1:{cls.es_port}"}}}
@@ -106,6 +126,19 @@ class CollectorIntegration(unittest.TestCase):
             else:
                 for group in job["static_configs"]:
                     group["targets"] = targets[:1]
+        job = config["receivers"]["prometheus/litellm"]["config"]["scrape_configs"][0]
+        job.pop("kubernetes_sd_configs")
+        job["scrape_interval"], job["scrape_timeout"] = "1s", "1s"
+        discovery = cls.directory / "litellm.json"
+        discovery.write_text(json.dumps([
+            {"targets": [target], "labels": {
+                "__meta_kubernetes_service_name": "litellm-router",
+                "__meta_kubernetes_pod_uid": f"litellm-pod-{index}",
+                "__meta_kubernetes_pod_name": f"litellm-{index}",
+                "__meta_kubernetes_pod_node_name": f"node-{index}",
+            }} for index, target in enumerate(targets)
+        ]))
+        job["file_sd_configs"] = [{"files": [str(discovery)]}]
         # Kubernetes discovery/enrichment and the Elasticsearch API need a deployment.
         # Keep the real relabel rules and processor chains; only replace their inputs.
         config["processors"]["k8s_attributes"] = {"passthrough": True}
@@ -141,6 +174,32 @@ class CollectorIntegration(unittest.TestCase):
         result = subprocess.run([OPTIONS.collector, "--version"], capture_output=True, text=True, timeout=10)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(result.stdout.strip(), f"{distribution['name']} version {distribution['version']}")
+
+    def test_litellm_scrapes_keep_real_replicas_and_guardrail_labels(self):
+        def guardrails():
+            result = {}
+            for resource in self.resources("metrics/litellm", "resourceMetrics"):
+                attrs = unpack(resource["resource"]["attributes"])
+                for scope in resource.get("scopeMetrics", []):
+                    for metric in scope.get("metrics", []):
+                        if metric["name"].startswith("litellm_guardrail_requests"):
+                            result[attrs["service.instance.id"]] = (attrs, metric)
+            return result if len(result) == 2 else None
+
+        captured = self.wait_for(guardrails, "LiteLLM guardrail metrics from both pods")
+        self.assertEqual(set(captured), {"litellm-pod-0", "litellm-pod-1"})
+        for instance, (attrs, metric) in captured.items():
+            self.assertEqual(attrs["service.name"], "litellm")
+            self.assertEqual(attrs["service.namespace"], "ai-test")
+            self.assertEqual(attrs["k8s.pod.uid"], instance)
+            self.assertEqual(attrs["k8s.cluster.name"], "test-cluster")
+            self.assertEqual(attrs["suse.ai.product"], "litellm")
+            self.assertEqual(metric["sum"]["aggregationTemporality"], 2)
+            point = metric["sum"]["dataPoints"][0]
+            labels = unpack(point["attributes"])
+            self.assertEqual(labels["guardrail_name"], "prompt-policy")
+            self.assertEqual(labels["status"], "error")
+            self.assertEqual(labels["hook_type"], "pre_call")
 
     @classmethod
     def healthy(cls):

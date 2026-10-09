@@ -23,7 +23,7 @@ receivers:
       - job_name: vllm
         scrape_interval: 10s
         kubernetes_sd_configs:
-        - role: service
+        - role: endpoints
           namespaces:
             names:
             - ${env:SUSE_AI_NAMESPACE:-suse-private-ai}
@@ -33,9 +33,9 @@ receivers:
           action: keep
           regex: .*vllm.*
         - source_labels:
-          - __meta_kubernetes_service_port_number
+          - __address__
           action: keep
-          regex: ${env:VLLM_METRICS_PORT:-8000}
+          regex: .*:${env:VLLM_METRICS_PORT:-8000}
         - source_labels:
           - __meta_kubernetes_service_name
           target_label: service_name
@@ -44,6 +44,14 @@ receivers:
           target_label: service_namespace
         - target_label: gen_ai_system
           replacement: vllm
+        - target_label: suse_ai_product
+          replacement: vllm
+        - source_labels: [__meta_kubernetes_pod_uid]
+          target_label: k8s_pod_uid
+        - source_labels: [__meta_kubernetes_pod_node_name]
+          target_label: k8s_node_name
+        - source_labels: [__meta_kubernetes_namespace]
+          target_label: k8s_namespace_name
       - job_name: milvus
         scrape_interval: 15s
         metrics_path: /metrics
@@ -54,6 +62,7 @@ receivers:
             service_name: milvus
             service_namespace: ${env:SUSE_AI_NAMESPACE:-suse-private-ai}
             db_system: milvus
+            suse_ai_product: milvus
       - job_name: qdrant
         scrape_interval: 10s
         metrics_path: /metrics
@@ -64,6 +73,7 @@ receivers:
             service_name: qdrant
             service_namespace: ${env:SUSE_AI_NAMESPACE:-suse-private-ai}
             db_system: qdrant
+            suse_ai_product: qdrant
       - job_name: gpu-metrics
         scrape_interval: 10s
         kubernetes_sd_configs:
@@ -88,6 +98,17 @@ receivers:
           target_label: service_namespace
         - target_label: hw_type
           replacement: gpu
+        - source_labels: [__meta_kubernetes_pod_node_name]
+          target_label: k8s_node_name
+        - source_labels: [__meta_kubernetes_namespace]
+          target_label: k8s_namespace_name
+        metric_relabel_configs:
+        - source_labels: [namespace]
+          target_label: pod_namespace
+        - source_labels: [pod]
+          target_label: pod_name
+        - source_labels: [container]
+          target_label: container_name
   elasticsearch:
     endpoint: ${env:ELASTICSEARCH_ENDPOINT:-http://opensearch-cluster-master-headless.${env:SUSE_AI_NAMESPACE:-suse-private-ai}.svc.cluster.local:9200}
     username: ${env:ELASTICSEARCH_USERNAME:-admin}
@@ -134,9 +155,6 @@ processors:
       - from: connection
   resource:
     attributes:
-    - key: k8s.cluster.name
-      value: ${env:K8S_CLUSTER_NAME:-local}
-      action: insert
     - key: service.instance.id
       from_attribute: k8s.pod.uid
       action: insert
@@ -144,8 +162,16 @@ processors:
       from_attribute: k8s.namespace.name
       action: insert
     - key: service.namespace
-      value: ${env:SUSE_AI_NAMESPACE:-suse-private-ai}
+      value: default
       action: insert
+  transform/kubernetes_identity:
+    error_mode: propagate
+    trace_statements: &kubernetes_identity
+    - context: resource
+      statements:
+      - set(resource.attributes["k8s.cluster.name"], "${env:K8S_CLUSTER_NAME:-local}") where resource.attributes["k8s.cluster.name"] == nil and (resource.attributes["k8s.pod.uid"] != nil or resource.attributes["k8s.node.name"] != nil)
+    metric_statements: *kubernetes_identity
+    log_statements: *kubernetes_identity
   transform/genai-normalize:
     error_mode: ignore
     trace_statements:
@@ -199,7 +225,11 @@ processors:
       statements:
       - set(resource.attributes["service.name"], attributes["service_name"]) where attributes["service_name"] != nil
       - set(resource.attributes["service.namespace"], attributes["service_namespace"]) where attributes["service_namespace"] != nil
-      - set(resource.attributes["k8s.namespace.name"], attributes["service_namespace"]) where attributes["service_namespace"] != nil
+      - set(resource.attributes["suse.ai.product"], attributes["suse_ai_product"]) where attributes["suse_ai_product"] != nil
+      - set(resource.attributes["k8s.pod.uid"], attributes["k8s_pod_uid"]) where attributes["k8s_pod_uid"] != nil and attributes["k8s_pod_uid"] != ""
+      - set(resource.attributes["service.instance.id"], attributes["k8s_pod_uid"]) where attributes["k8s_pod_uid"] != nil and attributes["k8s_pod_uid"] != ""
+      - set(resource.attributes["k8s.node.name"], attributes["k8s_node_name"]) where attributes["k8s_node_name"] != nil and attributes["k8s_node_name"] != ""
+      - set(resource.attributes["k8s.namespace.name"], attributes["k8s_namespace_name"]) where attributes["k8s_namespace_name"] != nil and attributes["k8s_namespace_name"] != ""
       - set(resource.attributes["hw.type"], attributes["hw_type"]) where attributes["hw_type"] != nil
       - set(resource.attributes["gen_ai.system"], attributes["gen_ai_system"]) where resource.attributes["gen_ai.system"] == nil and attributes["gen_ai_system"] != nil
       - set(resource.attributes["db.system"], attributes["db_system"]) where resource.attributes["db.system"] == nil and attributes["db_system"] != nil
@@ -214,6 +244,32 @@ processors:
     - key: db.system.name
       value: ${env:ELASTICSEARCH_SYSTEM:-opensearch}
       action: insert
+    - key: suse.ai.product
+      value: ${env:ELASTICSEARCH_SYSTEM:-opensearch}
+      action: insert
+  filter/suse_ai_observations:
+    error_mode: propagate
+    metrics:
+      metric:
+      - name != "traces_service_graph_request_total"
+  cumulativetodelta/suse_ai_calls:
+    include:
+      metrics: [traces_service_graph_request_total]
+      match_type: strict
+    initial_value: keep
+    max_staleness: 20m
+  filter/suse_ai_idle_calls:
+    error_mode: propagate
+    metrics:
+      datapoint:
+      - 'metric.name == "traces_service_graph_request_total" and datapoint.value_int == 0'
+  transform/suse_ai_observations:
+    error_mode: propagate
+    metric_statements:
+    - context: metric
+      statements:
+      - set(metric.name, "suse.ai.service.calls") where metric.name == "traces_service_graph_request_total"
+      - convert_sum_to_gauge() where metric.name == "suse.ai.service.calls"
   batch:
     send_batch_size: 1000
     timeout: 1s
@@ -225,10 +281,26 @@ exporters:
     tls:
       insecure: ${env:OTLP_INSECURE:-true}
 connectors:
+  service_graph/suse_ai:
+    dimensions:
+    - service.namespace
+    metrics_flush_interval: 15s
+    store:
+      ttl: 30s
+      max_items: 10000
+    virtual_node_peer_attributes: []
+    virtual_node_extra_label: true
   span_metrics:
     metrics_expiration: 5m
+    metrics_flush_interval: 15s
     namespace: otel_span
+    histogram:
+      unit: s
+      explicit:
+        buckets: [5ms, 10ms, 50ms, 100ms, 500ms, 1s, 5s, 10s, 30s]
     dimensions:
+    - name: service.namespace
+    - name: service.instance.id
     - name: gen_ai.provider.name
     - name: gen_ai.request.model
 service:
@@ -243,12 +315,18 @@ service:
       - memory_limiter
       - resource_detection
       - k8s_attributes
+      - transform/kubernetes_identity
       - resource
       - transform/genai-normalize
       - batch
       exporters:
       - otlp
       - span_metrics
+      - service_graph/suse_ai
+    metrics/suse_ai_observations:
+      receivers: [service_graph/suse_ai]
+      processors: [memory_limiter, filter/suse_ai_observations, cumulativetodelta/suse_ai_calls, filter/suse_ai_idle_calls, transform/suse_ai_observations, batch]
+      exporters: [otlp]
     metrics:
       receivers:
       - otlp
@@ -257,6 +335,7 @@ service:
       - memory_limiter
       - resource_detection
       - k8s_attributes
+      - transform/kubernetes_identity
       - resource
       - transform/genai-normalize
       - batch
@@ -268,6 +347,7 @@ service:
       processors:
       - memory_limiter
       - transform/prometheus
+      - transform/kubernetes_identity
       - resource
       - transform/genai-normalize
       - batch
@@ -291,6 +371,7 @@ service:
       - memory_limiter
       - resource_detection
       - k8s_attributes
+      - transform/kubernetes_identity
       - resource
       - batch
       exporters:

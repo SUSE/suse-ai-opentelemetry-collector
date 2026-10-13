@@ -17,6 +17,8 @@ import urllib.request
 
 import yaml
 
+from identity_fixture import IdentityCases
+
 ROOT = Path(__file__).resolve().parents[1]
 OPTIONS = None
 
@@ -65,7 +67,7 @@ DCGM_FI_DEV_GPU_UTIL{namespace="workload-ns",pod="inference-pod",container="vllm
         pass
 
 
-class CollectorIntegration(unittest.TestCase):
+class CollectorIntegration(IdentityCases, unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.temp = tempfile.TemporaryDirectory(prefix="collector-test-")
@@ -126,6 +128,14 @@ class CollectorIntegration(unittest.TestCase):
             else:
                 for group in job["static_configs"]:
                     group["targets"] = targets[:1]
+        for suffix, namespace in (("missing", None), ("empty", ""), ("valid", "tenant-scrape")):
+            labels = {"suse_ai_product": "vllm", "gen_ai_system": "vllm"}
+            if namespace is not None:
+                labels["service_namespace"] = namespace
+            config["receivers"]["prometheus"]["config"]["scrape_configs"].append({
+                "job_name": "scrape-namespace-" + suffix, "scrape_interval": "1s", "scrape_timeout": "1s",
+                "static_configs": [{"targets": targets[:1], "labels": labels}],
+            })
         job = config["receivers"]["prometheus/litellm"]["config"]["scrape_configs"][0]
         job.pop("kubernetes_sd_configs")
         job["scrape_interval"], job["scrape_timeout"] = "1s", "1s"
@@ -337,11 +347,34 @@ class CollectorIntegration(unittest.TestCase):
         span = unpack(row["scopeSpans"][0]["spans"][0]["attributes"])
         self.assertEqual(span["gen_ai.operation.name"], "chat")
 
+    def test_scraped_namespaces_are_normalized_without_kubernetes_metadata(self):
+        expected = {"scrape-namespace-missing": "default", "scrape-namespace-empty": "default",
+                    "scrape-namespace-valid": "tenant-scrape"}
+        def resources():
+            return [r for r in self.resources("metrics/prometheus", "resourceMetrics")
+                    if unpack(r["resource"]["attributes"]).get("service.name") in expected]
+        self.wait_for(lambda: {unpack(r["resource"]["attributes"])["service.name"] for r in resources()} == set(expected),
+                      "scraped namespace cases")
+        for row in resources():
+            values = unpack(row["resource"]["attributes"])
+            self.assertEqual(values["service.namespace"], expected[values["service.name"]])
+            self.assertEqual(values["suse.ai.product"], "vllm")
+            self.assertFalse(any(k.startswith("k8s.") for k in values))
+            for scope in row["scopeMetrics"]:
+                for metric in scope["metrics"]:
+                    for payload in ("gauge", "sum", "histogram"):
+                        for point in metric.get(payload, {}).get("dataPoints", []):
+                            labels = unpack(point.get("attributes", []))
+                            if "service_namespace" in labels:
+                                self.assertEqual(labels["service_namespace"], values["service.namespace"])
+
     def test_scraper_resources_keep_target_identity(self):
         def scrape_resources():
-            rows = self.resources("metrics/prometheus", "resourceMetrics")
+            expected = {"my-vllm", "milvus", "qdrant", "nvidia-dcgm-exporter"}
+            rows = [row for row in self.resources("metrics/prometheus", "resourceMetrics")
+                    if unpack(row["resource"]["attributes"]).get("service.name") in expected]
             names = {unpack(row["resource"]["attributes"]).get("service.name") for row in rows}
-            return rows if names == {"my-vllm", "milvus", "qdrant", "nvidia-dcgm-exporter"} else None
+            return rows if names == expected else None
         rows = self.wait_for(scrape_resources, "all scraper jobs")
         vllm_instances = set()
         histogram_seen = False
@@ -431,8 +464,10 @@ class CollectorIntegration(unittest.TestCase):
                     for metric in scope['metrics']:
                         result.append((unpack(row.get('resource', {}).get('attributes', [])), metric))
             return result
-        self.wait_for(lambda: 'suse.ai.service.calls' in
-                      {m['name'] for _, m in observations()}, 'service-call observations')
+        self.wait_for(lambda: any(m['name'] == 'suse.ai.service.calls' and
+                      any(unpack(dp['attributes']).get('client') == 'relation-client'
+                          for dp in m['gauge']['dataPoints']) for _, m in observations()),
+                      'relation-client service-call observations')
         self.assertNotIn('suse.ai.model.observations', {m['name'] for _, m in observations()})
         traces = [r for r in self.resources('traces', 'resourceSpans')
                   if unpack(r['resource']['attributes']).get('service.name') == 'relation-client']

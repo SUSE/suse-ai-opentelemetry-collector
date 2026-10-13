@@ -158,12 +158,6 @@ processors:
     - key: service.instance.id
       from_attribute: k8s.pod.uid
       action: insert
-    - key: service.namespace
-      from_attribute: k8s.namespace.name
-      action: insert
-    - key: service.namespace
-      value: default
-      action: insert
   transform/kubernetes_identity:
     error_mode: propagate
     trace_statements: &kubernetes_identity
@@ -172,11 +166,60 @@ processors:
       - set(resource.attributes["k8s.cluster.name"], "${env:K8S_CLUSTER_NAME:-local}") where resource.attributes["k8s.cluster.name"] == nil and (resource.attributes["k8s.pod.uid"] != nil or resource.attributes["k8s.node.name"] != nil)
     metric_statements: *kubernetes_identity
     log_statements: *kubernetes_identity
+  transform/suse_ai_resource:
+    error_mode: ignore
+    trace_statements: &suse_ai_resource
+    - context: resource
+      statements: &suse_ai_resource_statements
+      - set(resource.attributes["service.namespace"], resource.attributes["k8s.namespace.name"]) where (resource.attributes["service.namespace"] == nil or
+        resource.attributes["service.namespace"] == "") and resource.attributes["k8s.namespace.name"] != nil and resource.attributes["k8s.namespace.name"]
+        != ""
+      - delete_key(resource.attributes, "suse.ai.product") where resource.attributes["suse.ai.product"] == ""
+      - delete_key(resource.attributes, "suse.ai.component.type") where resource.attributes["suse.ai.component.type"] == ""
+      - set(resource.attributes["service.namespace"], "default") where resource.attributes["service.namespace"] == nil or resource.attributes["service.namespace"]
+        == ""
+      - set(resource.attributes["suse.ai.product"], "vllm") where resource.attributes["suse.ai.product"] == nil and resource.attributes["suse.ai.component.type"]
+        == "inference-engine.vllm"
+      - set(resource.attributes["suse.ai.product"], "ollama") where resource.attributes["suse.ai.product"] == nil and resource.attributes["suse.ai.component.type"]
+        == "inference-engine.ollama"
+      - set(resource.attributes["suse.ai.product"], "kserve") where resource.attributes["suse.ai.product"] == nil and resource.attributes["suse.ai.component.type"]
+        == "inference-engine.kserve"
+      - set(resource.attributes["suse.ai.product"], "litellm") where resource.attributes["suse.ai.product"] == nil and resource.attributes["suse.ai.component.type"]
+        == "model-proxy.litellm"
+      - set(resource.attributes["suse.ai.product"], "open-webui") where resource.attributes["suse.ai.product"] == nil and resource.attributes["suse.ai.component.type"]
+        == "ui.open-webui"
+      - set(resource.attributes["suse.ai.product"], "milvus") where resource.attributes["suse.ai.product"] == nil and resource.attributes["suse.ai.component.type"]
+        == "vectordb.milvus"
+      - set(resource.attributes["suse.ai.product"], "qdrant") where resource.attributes["suse.ai.product"] == nil and resource.attributes["suse.ai.component.type"]
+        == "vectordb.qdrant"
+      - set(resource.attributes["suse.ai.product"], "opensearch") where resource.attributes["suse.ai.product"] == nil and resource.attributes["suse.ai.component.type"]
+        == "search-engine.opensearch"
+      - set(resource.attributes["suse.ai.product"], "elasticsearch") where resource.attributes["suse.ai.product"] == nil and resource.attributes["suse.ai.component.type"]
+        == "search-engine.elasticsearch"
+      - set(resource.attributes["suse.ai.product"], "mlflow") where resource.attributes["suse.ai.product"] == nil and resource.attributes["suse.ai.component.type"]
+        == "ml-registry.mlflow"
+      - set(resource.attributes["suse.ai.product"], "kubeflow-model-registry") where resource.attributes["suse.ai.product"] == nil and resource.attributes["suse.ai.component.type"]
+        == "ml-registry.kubeflow"
+      - set(resource.attributes["suse.ai.product"], "kubeflow-pipelines") where resource.attributes["suse.ai.product"] == nil and resource.attributes["suse.ai.component.type"]
+        == "workflow-engine.kubeflow-pipelines"
+      - set(resource.attributes["suse.ai.product"], resource.attributes["suse.ai.component.name"]) where resource.attributes["suse.ai.product"] == nil and
+        resource.attributes["suse.ai.component.name"] != nil and IsMatch(resource.attributes["suse.ai.component.name"], "^(vllm|ollama|kserve|litellm|open-webui|milvus|qdrant|opensearch|elasticsearch|mlflow|kubeflow-model-registry|kubeflow-pipelines)$")
+    metric_statements:
+    - context: resource
+      statements: *suse_ai_resource_statements
+    - context: datapoint
+      statements:
+      - set(datapoint.attributes["service_namespace"], resource.attributes["service.namespace"]) where datapoint.attributes["service_namespace"] != nil
+    log_statements: *suse_ai_resource
   transform/genai-normalize:
     error_mode: ignore
     trace_statements:
     - context: span
       statements:
+      - set(attributes["gen_ai.agent.name"], attributes["traceloop.entity.name"]) where
+        (attributes["gen_ai.agent.name"] == nil or attributes["gen_ai.agent.name"] == "")
+        and attributes["traceloop.span.kind"] == "agent" and attributes["traceloop.entity.name"] != nil
+        and attributes["traceloop.entity.name"] != ""
       - set(attributes["gen_ai.system"], attributes["GenAiSystem"]) where attributes["gen_ai.system"] == nil and attributes["GenAiSystem"] != nil
       - set(attributes["gen_ai.provider.name"], attributes["gen_ai.system"]) where attributes["gen_ai.provider.name"] == nil and attributes["gen_ai.system"] != nil
       - set(attributes["gen_ai.operation.name"], attributes["GenAiOperationName"]) where attributes["gen_ai.operation.name"] == nil and attributes["GenAiOperationName"] != nil
@@ -317,6 +360,7 @@ service:
       - k8s_attributes
       - transform/kubernetes_identity
       - resource
+      - transform/suse_ai_resource
       - transform/genai-normalize
       - batch
       exporters:
@@ -337,6 +381,7 @@ service:
       - k8s_attributes
       - transform/kubernetes_identity
       - resource
+      - transform/suse_ai_resource
       - transform/genai-normalize
       - batch
       exporters:
@@ -349,6 +394,7 @@ service:
       - transform/prometheus
       - transform/kubernetes_identity
       - resource
+      - transform/suse_ai_resource
       - transform/genai-normalize
       - batch
       exporters:
@@ -360,6 +406,7 @@ service:
       - memory_limiter
       - resource/elasticsearch
       - resource
+      - transform/suse_ai_resource
       - transform/genai-normalize
       - batch
       exporters:
@@ -373,6 +420,7 @@ service:
       - k8s_attributes
       - transform/kubernetes_identity
       - resource
+      - transform/suse_ai_resource
       - batch
       exporters:
       - otlp

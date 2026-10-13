@@ -62,5 +62,5 @@ service:
   pipelines:
     metrics/litellm:
       receivers: [prometheus/litellm]
-      processors: [memory_limiter, transform/litellm_identity, resource/litellm, transform/genai-normalize, batch]
+      processors: [memory_limiter, transform/litellm_identity, resource/litellm, transform/suse_ai_resource, transform/genai-normalize, batch]
       exporters: [otlp]

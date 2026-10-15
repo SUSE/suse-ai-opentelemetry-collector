@@ -25,6 +25,10 @@ Because this collector inherits the K8s distribution, it ships with Kubernetes-n
 
 See [`builder-config.yaml`](builder-config.yaml) for the full component manifest and [`collector-config.yaml`](collector-config.yaml) for a reference pipeline configuration.
 
+Optional [workload observation overlays](examples/README.md) provide per-pod
+HTTP availability checks and Ollama process residency metrics with real pod UID
+identity. OpenSearch aggregate metrics remain separate from per-pod probes.
+
 ### Explicit client dependencies
 
 `count/suse_ai_clients` accepts only CLIENT spans with an observed nonempty

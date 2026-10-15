@@ -25,6 +25,27 @@ Because this collector inherits the K8s distribution, it ships with Kubernetes-n
 
 See [`builder-config.yaml`](builder-config.yaml) for the full component manifest and [`collector-config.yaml`](collector-config.yaml) for a reference pipeline configuration.
 
+### Explicit client dependencies
+
+`count/suse_ai_clients` accepts only CLIENT spans with an observed nonempty
+`server.address` and explicitly resolved `suse.ai.peer.service.name`,
+`suse.ai.peer.service.namespace` and `suse.ai.peer.cluster`. The peer cluster must
+equal the caller's actual `k8s.cluster.name`; unresolved, ambiguous and cross-cluster
+targets must not be assigned these attributes. Instrumentation must verify target
+identities against the actual deployment, not infer them from a provider name.
+
+Namespace normalization runs before the connector. Its per-batch delta observations
+are converted to `suse.ai.service.calls` and use the same AI service relation mapping
+as paired servicegraph observations. No server spans, target components or synthetic
+Kubernetes metadata are created. Zero counts are filtered, so unrelated trace batches
+cannot refresh an idle dependency. Both sources can observe one call; these gauges
+serve topology freshness, not request-volume charts. Record peer attributes on one
+provider CLIENT span only, not its native HTTP child.
+
+Count is already included in this distribution at 0.160.0 (upstream alpha). The same
+configuration is tested with Contrib 0.156.0. Services retain the companion's canonical
+namespace/name identifiers, including its existing cross-cluster identity limitation.
+
 ## Building
 
 Requires Go 1.26.0 or newer. The container and CI use Go 1.26.7. Build the checked-in distribution:

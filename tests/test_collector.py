@@ -312,7 +312,10 @@ class CollectorIntegration(IdentityCases, unittest.TestCase):
                      {"attributes": attributes({"GenAiSystem": "ollama", "GenAiRequestModel": "legacy", "gen_ai.request.model": "current"}),
                       "timeUnixNano": str(time.time_ns()), "asInt": "4"}]}}]}]}]}
         self.send("metrics", data)
-        self.wait_for(lambda: self.resources("metrics", "resourceMetrics"), "OTLP metrics")
+        self.wait_for(lambda: any(m['name'] == 'gen_ai.client.token.usage'
+                      for r in self.resources('metrics', 'resourceMetrics')
+                      for scope in r['scopeMetrics'] for m in scope['metrics']),
+                      'OTLP token metrics')
         rows = self.signal_resources("metrics", "resourceMetrics")
         points = []
         for row in rows:
@@ -498,6 +501,49 @@ class CollectorIntegration(IdentityCases, unittest.TestCase):
                        if unpack(dp['attributes']).get('client') == 'relation-client']
         self.assertEqual(sum(int(dp['asInt']) for dp in call_points), 1,
                          'Cached service-graph counters must not refresh an idle relationship')
+
+    def test_explicit_client_observations_are_scoped_and_do_not_refresh_when_idle(self):
+        resource = {'service.name': 'resolved-client', 'service.namespace': '',
+                    'k8s.namespace.name': 'caller-ns', 'k8s.cluster.name': 'cluster-one'}
+        peer = {'server.address': 'ollama.target-ns.svc.cluster.local',
+                'suse.ai.peer.service.name': 'resolved-target',
+                'suse.ai.peer.service.namespace': 'target-ns',
+                'suse.ai.peer.cluster': 'cluster-one'}
+        def send(values, kind=3, overrides=None):
+            now = time.time_ns()
+            self.send('traces', {'resourceSpans': [{
+                'resource': {'attributes': attributes({**resource, **(overrides or {})})},
+                'scopeSpans': [{'spans': [{'traceId': 'f' * 32, 'spanId': 'f' * 16,
+                    'name': 'resolved call', 'kind': kind,
+                    'startTimeUnixNano': str(now - 1000000), 'endTimeUnixNano': str(now),
+                    'attributes': attributes(values)}]}]}]})
+        def points():
+            return [dp for row in self.resources('metrics/suse_ai_observations', 'resourceMetrics')
+                    for scope in row['scopeMetrics'] for metric in scope['metrics']
+                    if metric['name'] == 'suse.ai.service.calls'
+                    for dp in metric['gauge']['dataPoints']
+                    if unpack(dp['attributes']).get('client') == 'resolved-client']
+        send(peer)
+        self.wait_for(points, 'resolved client observation')
+        self.assertEqual(sum(int(p['asInt']) for p in points()), 1)
+        labels = unpack(points()[0]['attributes'])
+        self.assertEqual((labels['client_service.namespace'], labels['server_service.namespace']),
+                         ('caller-ns', 'target-ns'))
+        self.assertEqual(labels['server'], 'resolved-target')
+        self.assertEqual(labels['connection_type'], '')
+        # Ordinary HTTP children, server spans and unresolved/wrong-cluster peers
+        # cannot count the provider call again or refresh its topology edge.
+        for key in peer:
+            send({k: v for k, v in peer.items() if k != key})
+            send({**peer, key: ''})
+        send(peer, kind=2)
+        send({**peer, 'suse.ai.peer.cluster': 'cluster-two'})
+        send(peer, overrides={'suse.ai.managed': 'false'})
+        for _ in range(3):
+            send({'server.address': peer['server.address']})
+            time.sleep(1)
+        self.assertEqual(sum(int(p['asInt']) for p in points()), 1,
+                         'Unrelated batches must not emit zero-count idle observations')
 
 
 if __name__ == "__main__":

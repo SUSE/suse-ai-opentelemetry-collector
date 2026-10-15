@@ -294,7 +294,7 @@ processors:
     error_mode: propagate
     metrics:
       metric:
-      - name != "traces_service_graph_request_total"
+      - name != "traces_service_graph_request_total" and name != "suse.ai.client.calls"
   cumulativetodelta/suse_ai_calls:
     include:
       metrics: [traces_service_graph_request_total]
@@ -305,13 +305,22 @@ processors:
     error_mode: propagate
     metrics:
       datapoint:
-      - 'metric.name == "traces_service_graph_request_total" and datapoint.value_int == 0'
+      - '(metric.name == "traces_service_graph_request_total" or metric.name == "suse.ai.client.calls") and datapoint.value_int == 0'
   transform/suse_ai_observations:
     error_mode: propagate
     metric_statements:
+    - context: datapoint
+      conditions:
+      - metric.name == "suse.ai.client.calls"
+      statements:
+      - set(datapoint.attributes["client"], resource.attributes["service.name"])
+      - set(datapoint.attributes["client_service.namespace"], resource.attributes["service.namespace"])
+      - set(datapoint.attributes["server"], datapoint.attributes["suse.ai.peer.service.name"])
+      - set(datapoint.attributes["server_service.namespace"], datapoint.attributes["suse.ai.peer.service.namespace"])
+      - set(datapoint.attributes["connection_type"], "")
     - context: metric
       statements:
-      - set(metric.name, "suse.ai.service.calls") where metric.name == "traces_service_graph_request_total"
+      - set(metric.name, "suse.ai.service.calls") where metric.name == "traces_service_graph_request_total" or metric.name == "suse.ai.client.calls"
       - convert_sum_to_gauge() where metric.name == "suse.ai.service.calls"
   batch:
     send_batch_size: 1000
@@ -324,6 +333,24 @@ exporters:
     tls:
       insecure: ${env:OTLP_INSECURE:-true}
 connectors:
+  # One delta observation per resolved provider CLIENT span. No idle cache.
+  count/suse_ai_clients:
+    spans:
+      suse.ai.client.calls:
+        description: Calls to explicitly resolved canonical services; topology observations only.
+        conditions:
+        - >-
+          kind == SPAN_KIND_CLIENT and
+          resource.attributes["service.name"] != nil and resource.attributes["service.name"] != "" and
+          resource.attributes["k8s.cluster.name"] != nil and resource.attributes["k8s.cluster.name"] != "" and
+          resource.attributes["suse.ai.managed"] != "false" and resource.attributes["suse.ai.managed"] != false and
+          attributes["server.address"] != nil and attributes["server.address"] != "" and
+          attributes["suse.ai.peer.service.name"] != nil and attributes["suse.ai.peer.service.name"] != "" and
+          attributes["suse.ai.peer.service.namespace"] != nil and attributes["suse.ai.peer.service.namespace"] != "" and
+          attributes["suse.ai.peer.cluster"] == resource.attributes["k8s.cluster.name"]
+        attributes:
+        - key: suse.ai.peer.service.name
+        - key: suse.ai.peer.service.namespace
   service_graph/suse_ai:
     dimensions:
     - service.namespace
@@ -367,8 +394,9 @@ service:
       - otlp
       - span_metrics
       - service_graph/suse_ai
+      - count/suse_ai_clients
     metrics/suse_ai_observations:
-      receivers: [service_graph/suse_ai]
+      receivers: [service_graph/suse_ai, count/suse_ai_clients]
       processors: [memory_limiter, filter/suse_ai_observations, cumulativetodelta/suse_ai_calls, filter/suse_ai_idle_calls, transform/suse_ai_observations, batch]
       exporters: [otlp]
     metrics:

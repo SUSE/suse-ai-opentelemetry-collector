@@ -50,6 +50,24 @@ Count is already included in this distribution at 0.160.0 (upstream alpha). The 
 configuration is tested with Contrib 0.156.0. Services retain the companion's canonical
 namespace/name identifiers, including its existing cross-cluster identity limitation.
 
+### Database client observations
+
+`transform/suse_ai_database` normalizes `db.system` to `db.system.name` and legacy
+`net.peer.name` / `net.peer.ip` / `net.peer.port` to `server.address` / `server.port`
+on database spans before the connectors run. Nonempty canonical attributes win;
+no destination identity is promoted to the calling resource, and no missing port
+or Kubernetes metadata is invented.
+
+The AI StackPack can display unresolved Milvus, Qdrant, OpenSearch and Elasticsearch
+endpoints as client-observed dependencies. A database system without an address
+does not identify a destination. These observations are scoped to the caller and
+endpoint and do not claim server metrics or health. To connect a known native
+database service, configure an exact endpoint-to-service association with the
+peer attributes described above. SDKs need only standard database attributes;
+the Collector can provide the verified association. See the
+[StackPack example](https://github.com/StackVista/suse-stackpacks/tree/feat-suse-ai-stackpack-v2/examples/suse-ai#databases-observed-from-client-spans)
+for the configuration and identity/expiry policy.
+
 ## Building
 
 Requires Go 1.26.0 or newer. The container and CI use Go 1.26.7. Build the checked-in distribution:

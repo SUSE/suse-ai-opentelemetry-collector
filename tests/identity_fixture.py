@@ -9,7 +9,16 @@ import time
 
 
 def attrs(values):
-    return [{"key": k, "value": {"stringValue": v}} for k, v in values.items()]
+    def value(v):
+        if isinstance(v, bool):
+            return {"boolValue": v}
+        if isinstance(v, int):
+            return {"intValue": str(v)}
+        if isinstance(v, float):
+            return {"doubleValue": v}
+        return {"stringValue": v}
+
+    return [{"key": k, "value": value(v)} for k, v in values.items()]
 
 
 def unpack(values):
@@ -281,3 +290,48 @@ class IdentityCases:
 
         self.wait_for(lambda: len(output()) == len(expected), "agent name matrix")
         self.assertEqual(output(), expected)
+
+    def test_database_endpoint_compatibility(self):
+        cases = [
+            ({"db.system": "milvus", "net.peer.name": "db.local", "net.peer.port": 19530},
+             ("milvus", "db.local", "19530")),
+            ({"db.system.name": "", "db.system": "qdrant", "server.address": "",
+              "net.peer.name": "db.local", "net.peer.ip": "192.0.2.1", "server.port": "", "net.peer.port": 6333},
+             ("qdrant", "db.local", "6333")),
+            ({"db.system.name": "opensearch", "db.system": "milvus", "server.address": "canonical",
+              "net.peer.name": "legacy", "server.port": 443, "net.peer.port": 9200},
+             ("opensearch", "canonical", "443")),
+            ({"db.system": "elasticsearch", "net.peer.ip": "2001:db8::1"},
+             ("elasticsearch", "2001:db8::1", None)),
+            ({"db.system": "milvus"}, ("milvus", None, None)),
+            ({"db.system": "", "net.peer.name": "not-a-database"}, (None, None, None)),
+            ({"http.request.method": "GET", "net.peer.name": "web"}, (None, None, None)),
+        ]
+        now, spans, expected = time.time_ns(), [], {}
+        for i, (values, result) in enumerate(cases):
+            name = "database-case-" + str(i)
+            expected[name] = result
+            spans.append({"name": name, "traceId": f"{0xDC00+i:032x}", "spanId": f"{i+1:016x}",
+                          "kind": 3, "startTimeUnixNano": str(now), "endTimeUnixNano": str(now+1000000),
+                          "attributes": attrs(values)})
+        self.send("traces", {"resourceSpans": [{
+            "resource": {"attributes": attrs({"service.name": "identity-database-client"})},
+            "scopeSpans": [{"spans": spans}]}]})
+
+        def resources():
+            return [r for r in self.signal_resources("traces", "resourceSpans")
+                    if unpack(r.get("resource", {}).get("attributes", [])).get("service.name")
+                    == "identity-database-client"]
+
+        def output():
+            return {s["name"]: tuple(unpack(s.get("attributes", [])).get(k)
+                                    for k in ("db.system.name", "server.address", "server.port"))
+                    for r in resources() for scope in r["scopeSpans"] for s in scope["spans"]}
+
+        self.wait_for(lambda: len(output()) == len(expected), "database endpoint matrix")
+        self.assertEqual(output(), expected)
+        for resource in resources():
+            attributes = unpack(resource["resource"]["attributes"])
+            self.assertEqual(attributes["service.namespace"], "default")
+            self.assertFalse({"suse.ai.product", "suse.ai.component.type", "k8s.cluster.name",
+                              "k8s.namespace.name", "db.system.name", "db.system"} & attributes.keys())

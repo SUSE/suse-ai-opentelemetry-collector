@@ -224,8 +224,6 @@ processors:
       - set(attributes["gen_ai.provider.name"], attributes["gen_ai.system"]) where attributes["gen_ai.provider.name"] == nil and attributes["gen_ai.system"] != nil
       - set(attributes["gen_ai.operation.name"], attributes["GenAiOperationName"]) where attributes["gen_ai.operation.name"] == nil and attributes["GenAiOperationName"] != nil
       - set(attributes["gen_ai.request.model"], attributes["GenAiRequestModel"]) where attributes["gen_ai.request.model"] == nil and attributes["GenAiRequestModel"] != nil
-      - set(attributes["db.system.name"], attributes["db.system"]) where attributes["db.system.name"] == nil and attributes["db.system"] != nil
-      - set(attributes["db.system"], attributes["db.system.name"]) where attributes["db.system"] == nil and attributes["db.system.name"] != nil
       - set(resource.attributes["gen_ai.system"], attributes["gen_ai.system"]) where resource.attributes["gen_ai.system"] == nil and attributes["gen_ai.system"] != nil
       - set(resource.attributes["gen_ai.provider.name"], attributes["gen_ai.provider.name"]) where resource.attributes["gen_ai.provider.name"] == nil and attributes["gen_ai.provider.name"] != nil
       - set(resource.attributes["gen_ai.models"], attributes["gen_ai.request.model"]) where (resource.attributes["gen_ai.models"] == nil or resource.attributes["gen_ai.models"] == "") and IsString(attributes["gen_ai.request.model"])
@@ -322,6 +320,31 @@ processors:
       statements:
       - set(metric.name, "suse.ai.service.calls") where metric.name == "traces_service_graph_request_total" or metric.name == "suse.ai.client.calls"
       - convert_sum_to_gauge() where metric.name == "suse.ai.service.calls"
+  transform/suse_ai_database:
+    error_mode: ignore
+    trace_statements:
+    - context: span
+      statements:
+      # Canonical nonempty values win; never promote a client's DB identity to its resource.
+      - set(span.attributes["db.system.name"], span.attributes["db.system"]) where
+        (span.attributes["db.system.name"] == nil or span.attributes["db.system.name"] == "")
+        and span.attributes["db.system"] != nil and span.attributes["db.system"] != ""
+      - set(span.attributes["db.system"], span.attributes["db.system.name"]) where
+        (span.attributes["db.system"] == nil or span.attributes["db.system"] == "")
+        and span.attributes["db.system.name"] != nil and span.attributes["db.system.name"] != ""
+    - context: span
+      conditions:
+      - span.attributes["db.system.name"] != nil and span.attributes["db.system.name"] != ""
+      statements:
+      - set(span.attributes["server.address"], span.attributes["net.peer.name"]) where
+        (span.attributes["server.address"] == nil or span.attributes["server.address"] == "")
+        and span.attributes["net.peer.name"] != nil and span.attributes["net.peer.name"] != ""
+      - set(span.attributes["server.address"], span.attributes["net.peer.ip"]) where
+        (span.attributes["server.address"] == nil or span.attributes["server.address"] == "")
+        and span.attributes["net.peer.ip"] != nil and span.attributes["net.peer.ip"] != ""
+      - set(span.attributes["server.port"], span.attributes["net.peer.port"]) where
+        (span.attributes["server.port"] == nil or span.attributes["server.port"] == "")
+        and span.attributes["net.peer.port"] != nil and span.attributes["net.peer.port"] != ""
   batch:
     send_batch_size: 1000
     timeout: 1s
@@ -389,6 +412,7 @@ service:
       - resource
       - transform/suse_ai_resource
       - transform/genai-normalize
+      - transform/suse_ai_database
       - batch
       exporters:
       - otlp

@@ -11,9 +11,10 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
 RUN --mount=type=cache,target=/root/.cache/go-build \
     "$(go env GOPATH)/bin/builder" --config builder-config.yaml
 
-COPY ./collector-config.yaml collector-config.yaml
-RUN API_KEY=validation ELASTICSEARCH_PASSWORD=validation \
-    ./suse-ai-opentelemetry-collector/suse-ai-opentelemetry-collector validate --config collector-config.yaml
+COPY ./collector-config.yaml ./litellm-receiver.yaml ./
+RUN API_KEY=validation ELASTICSEARCH_PASSWORD=validation K8S_CLUSTER_NAME=validation \
+    ./suse-ai-opentelemetry-collector/suse-ai-opentelemetry-collector validate \
+    --config collector-config.yaml --config litellm-receiver.yaml
 
 FROM dp.apps.rancher.io/containers/bci-micro:15.7
 
@@ -21,6 +22,7 @@ ARG USER_UID=10001
 USER ${USER_UID}
 
 COPY ./collector-config.yaml /otelcol/collector-config.yaml
+COPY ./litellm-receiver.yaml /otelcol/litellm-receiver.yaml
 
 COPY --from=build-stage /var/lib/ca-certificates/ca-bundle.pem /etc/ssl/certs/ca-certificates.crt
 

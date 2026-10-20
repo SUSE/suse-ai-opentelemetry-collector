@@ -5,6 +5,8 @@ on:
     paths:
       - 'builder-config.yaml'
       - 'collector-config.yaml'
+      - 'litellm-receiver.yaml'
+      - 'examples/**'
       - 'Containerfile'
       - 'suse-ai-opentelemetry-collector/**'
       - 'topologyexporter/**'
@@ -16,6 +18,8 @@ on:
     paths:
       - 'builder-config.yaml'
       - 'collector-config.yaml'
+      - 'litellm-receiver.yaml'
+      - 'examples/**'
       - 'Containerfile'
       - 'suse-ai-opentelemetry-collector/**'
       - 'topologyexporter/**'
@@ -53,4 +57,6 @@ jobs:
       - name: Install integration test dependency
         run: python3 -m pip install -r tests/requirements.txt
       - name: Validate configuration and telemetry behavior
-        run: python3 tests/test_collector.py --collector "$RUNNER_TEMP/otelcol-custom"
+        run: |
+          python3 tests/test_collector.py --collector "$RUNNER_TEMP/otelcol-custom"
+          python3 tests/test_workload_collection.py --collector "$RUNNER_TEMP/otelcol-custom"

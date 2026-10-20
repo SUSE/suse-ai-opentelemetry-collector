@@ -23,7 +23,7 @@ receivers:
       - job_name: vllm
         scrape_interval: 10s
         kubernetes_sd_configs:
-        - role: service
+        - role: endpoints
           namespaces:
             names:
             - ${env:SUSE_AI_NAMESPACE:-suse-private-ai}
@@ -33,9 +33,9 @@ receivers:
           action: keep
           regex: .*vllm.*
         - source_labels:
-          - __meta_kubernetes_service_port_number
+          - __address__
           action: keep
-          regex: ${env:VLLM_METRICS_PORT:-8000}
+          regex: .*:${env:VLLM_METRICS_PORT:-8000}
         - source_labels:
           - __meta_kubernetes_service_name
           target_label: service_name
@@ -44,6 +44,14 @@ receivers:
           target_label: service_namespace
         - target_label: gen_ai_system
           replacement: vllm
+        - target_label: suse_ai_product
+          replacement: vllm
+        - source_labels: [__meta_kubernetes_pod_uid]
+          target_label: k8s_pod_uid
+        - source_labels: [__meta_kubernetes_pod_node_name]
+          target_label: k8s_node_name
+        - source_labels: [__meta_kubernetes_namespace]
+          target_label: k8s_namespace_name
       - job_name: milvus
         scrape_interval: 15s
         metrics_path: /metrics
@@ -54,6 +62,7 @@ receivers:
             service_name: milvus
             service_namespace: ${env:SUSE_AI_NAMESPACE:-suse-private-ai}
             db_system: milvus
+            suse_ai_product: milvus
       - job_name: qdrant
         scrape_interval: 10s
         metrics_path: /metrics
@@ -64,6 +73,7 @@ receivers:
             service_name: qdrant
             service_namespace: ${env:SUSE_AI_NAMESPACE:-suse-private-ai}
             db_system: qdrant
+            suse_ai_product: qdrant
       - job_name: gpu-metrics
         scrape_interval: 10s
         kubernetes_sd_configs:
@@ -88,6 +98,17 @@ receivers:
           target_label: service_namespace
         - target_label: hw_type
           replacement: gpu
+        - source_labels: [__meta_kubernetes_pod_node_name]
+          target_label: k8s_node_name
+        - source_labels: [__meta_kubernetes_namespace]
+          target_label: k8s_namespace_name
+        metric_relabel_configs:
+        - source_labels: [namespace]
+          target_label: pod_namespace
+        - source_labels: [pod]
+          target_label: pod_name
+        - source_labels: [container]
+          target_label: container_name
   elasticsearch:
     endpoint: ${env:ELASTICSEARCH_ENDPOINT:-http://opensearch-cluster-master-headless.${env:SUSE_AI_NAMESPACE:-suse-private-ai}.svc.cluster.local:9200}
     username: ${env:ELASTICSEARCH_USERNAME:-admin}
@@ -134,29 +155,75 @@ processors:
       - from: connection
   resource:
     attributes:
-    - key: k8s.cluster.name
-      value: ${env:K8S_CLUSTER_NAME:-local}
-      action: insert
     - key: service.instance.id
       from_attribute: k8s.pod.uid
       action: insert
-    - key: service.namespace
-      from_attribute: k8s.namespace.name
-      action: insert
-    - key: service.namespace
-      value: ${env:SUSE_AI_NAMESPACE:-suse-private-ai}
-      action: insert
+  transform/kubernetes_identity:
+    error_mode: propagate
+    trace_statements: &kubernetes_identity
+    - context: resource
+      statements:
+      - set(resource.attributes["k8s.cluster.name"], "${env:K8S_CLUSTER_NAME:-local}") where resource.attributes["k8s.cluster.name"] == nil and (resource.attributes["k8s.pod.uid"] != nil or resource.attributes["k8s.node.name"] != nil)
+    metric_statements: *kubernetes_identity
+    log_statements: *kubernetes_identity
+  transform/suse_ai_resource:
+    error_mode: ignore
+    trace_statements: &suse_ai_resource
+    - context: resource
+      statements: &suse_ai_resource_statements
+      - set(resource.attributes["service.namespace"], resource.attributes["k8s.namespace.name"]) where (resource.attributes["service.namespace"] == nil or
+        resource.attributes["service.namespace"] == "") and resource.attributes["k8s.namespace.name"] != nil and resource.attributes["k8s.namespace.name"]
+        != ""
+      - delete_key(resource.attributes, "suse.ai.product") where resource.attributes["suse.ai.product"] == ""
+      - delete_key(resource.attributes, "suse.ai.component.type") where resource.attributes["suse.ai.component.type"] == ""
+      - set(resource.attributes["service.namespace"], "default") where resource.attributes["service.namespace"] == nil or resource.attributes["service.namespace"]
+        == ""
+      - set(resource.attributes["suse.ai.product"], "vllm") where resource.attributes["suse.ai.product"] == nil and resource.attributes["suse.ai.component.type"]
+        == "inference-engine.vllm"
+      - set(resource.attributes["suse.ai.product"], "ollama") where resource.attributes["suse.ai.product"] == nil and resource.attributes["suse.ai.component.type"]
+        == "inference-engine.ollama"
+      - set(resource.attributes["suse.ai.product"], "kserve") where resource.attributes["suse.ai.product"] == nil and resource.attributes["suse.ai.component.type"]
+        == "inference-engine.kserve"
+      - set(resource.attributes["suse.ai.product"], "litellm") where resource.attributes["suse.ai.product"] == nil and resource.attributes["suse.ai.component.type"]
+        == "model-proxy.litellm"
+      - set(resource.attributes["suse.ai.product"], "open-webui") where resource.attributes["suse.ai.product"] == nil and resource.attributes["suse.ai.component.type"]
+        == "ui.open-webui"
+      - set(resource.attributes["suse.ai.product"], "milvus") where resource.attributes["suse.ai.product"] == nil and resource.attributes["suse.ai.component.type"]
+        == "vectordb.milvus"
+      - set(resource.attributes["suse.ai.product"], "qdrant") where resource.attributes["suse.ai.product"] == nil and resource.attributes["suse.ai.component.type"]
+        == "vectordb.qdrant"
+      - set(resource.attributes["suse.ai.product"], "opensearch") where resource.attributes["suse.ai.product"] == nil and resource.attributes["suse.ai.component.type"]
+        == "search-engine.opensearch"
+      - set(resource.attributes["suse.ai.product"], "elasticsearch") where resource.attributes["suse.ai.product"] == nil and resource.attributes["suse.ai.component.type"]
+        == "search-engine.elasticsearch"
+      - set(resource.attributes["suse.ai.product"], "mlflow") where resource.attributes["suse.ai.product"] == nil and resource.attributes["suse.ai.component.type"]
+        == "ml-registry.mlflow"
+      - set(resource.attributes["suse.ai.product"], "kubeflow-model-registry") where resource.attributes["suse.ai.product"] == nil and resource.attributes["suse.ai.component.type"]
+        == "ml-registry.kubeflow"
+      - set(resource.attributes["suse.ai.product"], "kubeflow-pipelines") where resource.attributes["suse.ai.product"] == nil and resource.attributes["suse.ai.component.type"]
+        == "workflow-engine.kubeflow-pipelines"
+      - set(resource.attributes["suse.ai.product"], resource.attributes["suse.ai.component.name"]) where resource.attributes["suse.ai.product"] == nil and
+        resource.attributes["suse.ai.component.name"] != nil and IsMatch(resource.attributes["suse.ai.component.name"], "^(vllm|ollama|kserve|litellm|open-webui|milvus|qdrant|opensearch|elasticsearch|mlflow|kubeflow-model-registry|kubeflow-pipelines)$")
+    metric_statements:
+    - context: resource
+      statements: *suse_ai_resource_statements
+    - context: datapoint
+      statements:
+      - set(datapoint.attributes["service_namespace"], resource.attributes["service.namespace"]) where datapoint.attributes["service_namespace"] != nil
+    log_statements: *suse_ai_resource
   transform/genai-normalize:
     error_mode: ignore
     trace_statements:
     - context: span
       statements:
+      - set(attributes["gen_ai.agent.name"], attributes["traceloop.entity.name"]) where
+        (attributes["gen_ai.agent.name"] == nil or attributes["gen_ai.agent.name"] == "")
+        and attributes["traceloop.span.kind"] == "agent" and attributes["traceloop.entity.name"] != nil
+        and attributes["traceloop.entity.name"] != ""
       - set(attributes["gen_ai.system"], attributes["GenAiSystem"]) where attributes["gen_ai.system"] == nil and attributes["GenAiSystem"] != nil
       - set(attributes["gen_ai.provider.name"], attributes["gen_ai.system"]) where attributes["gen_ai.provider.name"] == nil and attributes["gen_ai.system"] != nil
       - set(attributes["gen_ai.operation.name"], attributes["GenAiOperationName"]) where attributes["gen_ai.operation.name"] == nil and attributes["GenAiOperationName"] != nil
       - set(attributes["gen_ai.request.model"], attributes["GenAiRequestModel"]) where attributes["gen_ai.request.model"] == nil and attributes["GenAiRequestModel"] != nil
-      - set(attributes["db.system.name"], attributes["db.system"]) where attributes["db.system.name"] == nil and attributes["db.system"] != nil
-      - set(attributes["db.system"], attributes["db.system.name"]) where attributes["db.system"] == nil and attributes["db.system.name"] != nil
       - set(resource.attributes["gen_ai.system"], attributes["gen_ai.system"]) where resource.attributes["gen_ai.system"] == nil and attributes["gen_ai.system"] != nil
       - set(resource.attributes["gen_ai.provider.name"], attributes["gen_ai.provider.name"]) where resource.attributes["gen_ai.provider.name"] == nil and attributes["gen_ai.provider.name"] != nil
       - set(resource.attributes["gen_ai.models"], attributes["gen_ai.request.model"]) where (resource.attributes["gen_ai.models"] == nil or resource.attributes["gen_ai.models"] == "") and IsString(attributes["gen_ai.request.model"])
@@ -199,7 +266,11 @@ processors:
       statements:
       - set(resource.attributes["service.name"], attributes["service_name"]) where attributes["service_name"] != nil
       - set(resource.attributes["service.namespace"], attributes["service_namespace"]) where attributes["service_namespace"] != nil
-      - set(resource.attributes["k8s.namespace.name"], attributes["service_namespace"]) where attributes["service_namespace"] != nil
+      - set(resource.attributes["suse.ai.product"], attributes["suse_ai_product"]) where attributes["suse_ai_product"] != nil
+      - set(resource.attributes["k8s.pod.uid"], attributes["k8s_pod_uid"]) where attributes["k8s_pod_uid"] != nil and attributes["k8s_pod_uid"] != ""
+      - set(resource.attributes["service.instance.id"], attributes["k8s_pod_uid"]) where attributes["k8s_pod_uid"] != nil and attributes["k8s_pod_uid"] != ""
+      - set(resource.attributes["k8s.node.name"], attributes["k8s_node_name"]) where attributes["k8s_node_name"] != nil and attributes["k8s_node_name"] != ""
+      - set(resource.attributes["k8s.namespace.name"], attributes["k8s_namespace_name"]) where attributes["k8s_namespace_name"] != nil and attributes["k8s_namespace_name"] != ""
       - set(resource.attributes["hw.type"], attributes["hw_type"]) where attributes["hw_type"] != nil
       - set(resource.attributes["gen_ai.system"], attributes["gen_ai_system"]) where resource.attributes["gen_ai.system"] == nil and attributes["gen_ai_system"] != nil
       - set(resource.attributes["db.system"], attributes["db_system"]) where resource.attributes["db.system"] == nil and attributes["db_system"] != nil
@@ -214,6 +285,68 @@ processors:
     - key: db.system.name
       value: ${env:ELASTICSEARCH_SYSTEM:-opensearch}
       action: insert
+    - key: suse.ai.product
+      value: ${env:ELASTICSEARCH_SYSTEM:-opensearch}
+      action: insert
+  filter/suse_ai_observations:
+    error_mode: propagate
+    metrics:
+      metric:
+      - name != "traces_service_graph_request_total" and name != "suse.ai.client.calls"
+  cumulativetodelta/suse_ai_calls:
+    include:
+      metrics: [traces_service_graph_request_total]
+      match_type: strict
+    initial_value: keep
+    max_staleness: 20m
+  filter/suse_ai_idle_calls:
+    error_mode: propagate
+    metrics:
+      datapoint:
+      - '(metric.name == "traces_service_graph_request_total" or metric.name == "suse.ai.client.calls") and datapoint.value_int == 0'
+  transform/suse_ai_observations:
+    error_mode: propagate
+    metric_statements:
+    - context: datapoint
+      conditions:
+      - metric.name == "suse.ai.client.calls"
+      statements:
+      - set(datapoint.attributes["client"], resource.attributes["service.name"])
+      - set(datapoint.attributes["client_service.namespace"], resource.attributes["service.namespace"])
+      - set(datapoint.attributes["server"], datapoint.attributes["suse.ai.peer.service.name"])
+      - set(datapoint.attributes["server_service.namespace"], datapoint.attributes["suse.ai.peer.service.namespace"])
+      - set(datapoint.attributes["connection_type"], "")
+    - context: metric
+      statements:
+      - set(metric.name, "suse.ai.service.calls") where metric.name == "traces_service_graph_request_total" or metric.name == "suse.ai.client.calls"
+      - convert_sum_to_gauge() where metric.name == "suse.ai.service.calls"
+  transform/suse_ai_database:
+    error_mode: ignore
+    trace_statements:
+    - context: span
+      statements:
+      # Canonical nonempty values win; never promote a client's DB identity to its resource.
+      - set(span.attributes["db.system.name"], span.attributes["db.system"]) where
+        (span.attributes["db.system.name"] == nil or span.attributes["db.system.name"] == "")
+        and span.attributes["db.system"] != nil and span.attributes["db.system"] != ""
+      - set(span.attributes["db.system"], span.attributes["db.system.name"]) where
+        (span.attributes["db.system"] == nil or span.attributes["db.system"] == "")
+        and span.attributes["db.system.name"] != nil and span.attributes["db.system.name"] != ""
+    - context: span
+      conditions:
+      # Peer attributes identify the database server only on CLIENT spans.
+      - span.kind == SPAN_KIND_CLIENT and
+        span.attributes["db.system.name"] != nil and span.attributes["db.system.name"] != ""
+      statements:
+      - set(span.attributes["server.address"], span.attributes["net.peer.name"]) where
+        (span.attributes["server.address"] == nil or span.attributes["server.address"] == "")
+        and span.attributes["net.peer.name"] != nil and span.attributes["net.peer.name"] != ""
+      - set(span.attributes["server.address"], span.attributes["net.peer.ip"]) where
+        (span.attributes["server.address"] == nil or span.attributes["server.address"] == "")
+        and span.attributes["net.peer.ip"] != nil and span.attributes["net.peer.ip"] != ""
+      - set(span.attributes["server.port"], span.attributes["net.peer.port"]) where
+        (span.attributes["server.port"] == nil or span.attributes["server.port"] == "")
+        and span.attributes["net.peer.port"] != nil and span.attributes["net.peer.port"] != ""
   batch:
     send_batch_size: 1000
     timeout: 1s
@@ -225,10 +358,44 @@ exporters:
     tls:
       insecure: ${env:OTLP_INSECURE:-true}
 connectors:
+  # One delta observation per resolved provider CLIENT span. No idle cache.
+  count/suse_ai_clients:
+    spans:
+      suse.ai.client.calls:
+        description: Calls to explicitly resolved canonical services; topology observations only.
+        conditions:
+        - >-
+          kind == SPAN_KIND_CLIENT and
+          resource.attributes["service.name"] != nil and resource.attributes["service.name"] != "" and
+          resource.attributes["k8s.cluster.name"] != nil and resource.attributes["k8s.cluster.name"] != "" and
+          resource.attributes["suse.ai.managed"] != "false" and resource.attributes["suse.ai.managed"] != false and
+          attributes["server.address"] != nil and attributes["server.address"] != "" and
+          attributes["suse.ai.peer.service.name"] != nil and attributes["suse.ai.peer.service.name"] != "" and
+          attributes["suse.ai.peer.service.namespace"] != nil and attributes["suse.ai.peer.service.namespace"] != "" and
+          attributes["suse.ai.peer.cluster"] == resource.attributes["k8s.cluster.name"]
+        attributes:
+        - key: suse.ai.peer.service.name
+        - key: suse.ai.peer.service.namespace
+  service_graph/suse_ai:
+    dimensions:
+    - service.namespace
+    metrics_flush_interval: 15s
+    store:
+      ttl: 30s
+      max_items: 10000
+    virtual_node_peer_attributes: []
+    virtual_node_extra_label: true
   span_metrics:
     metrics_expiration: 5m
+    metrics_flush_interval: 15s
     namespace: otel_span
+    histogram:
+      unit: s
+      explicit:
+        buckets: [5ms, 10ms, 50ms, 100ms, 500ms, 1s, 5s, 10s, 30s]
     dimensions:
+    - name: service.namespace
+    - name: service.instance.id
     - name: gen_ai.provider.name
     - name: gen_ai.request.model
 service:
@@ -243,12 +410,21 @@ service:
       - memory_limiter
       - resource_detection
       - k8s_attributes
+      - transform/kubernetes_identity
       - resource
+      - transform/suse_ai_resource
       - transform/genai-normalize
+      - transform/suse_ai_database
       - batch
       exporters:
       - otlp
       - span_metrics
+      - service_graph/suse_ai
+      - count/suse_ai_clients
+    metrics/suse_ai_observations:
+      receivers: [service_graph/suse_ai, count/suse_ai_clients]
+      processors: [memory_limiter, filter/suse_ai_observations, cumulativetodelta/suse_ai_calls, filter/suse_ai_idle_calls, transform/suse_ai_observations, batch]
+      exporters: [otlp]
     metrics:
       receivers:
       - otlp
@@ -257,7 +433,9 @@ service:
       - memory_limiter
       - resource_detection
       - k8s_attributes
+      - transform/kubernetes_identity
       - resource
+      - transform/suse_ai_resource
       - transform/genai-normalize
       - batch
       exporters:
@@ -268,7 +446,9 @@ service:
       processors:
       - memory_limiter
       - transform/prometheus
+      - transform/kubernetes_identity
       - resource
+      - transform/suse_ai_resource
       - transform/genai-normalize
       - batch
       exporters:
@@ -280,6 +460,7 @@ service:
       - memory_limiter
       - resource/elasticsearch
       - resource
+      - transform/suse_ai_resource
       - transform/genai-normalize
       - batch
       exporters:
@@ -291,7 +472,9 @@ service:
       - memory_limiter
       - resource_detection
       - k8s_attributes
+      - transform/kubernetes_identity
       - resource
+      - transform/suse_ai_resource
       - batch
       exporters:
       - otlp

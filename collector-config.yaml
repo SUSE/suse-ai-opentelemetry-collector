@@ -334,7 +334,9 @@ processors:
         and span.attributes["db.system.name"] != nil and span.attributes["db.system.name"] != ""
     - context: span
       conditions:
-      - span.attributes["db.system.name"] != nil and span.attributes["db.system.name"] != ""
+      # Peer attributes identify the database server only on CLIENT spans.
+      - span.kind == SPAN_KIND_CLIENT and
+        span.attributes["db.system.name"] != nil and span.attributes["db.system.name"] != ""
       statements:
       - set(span.attributes["server.address"], span.attributes["net.peer.name"]) where
         (span.attributes["server.address"] == nil or span.attributes["server.address"] == "")

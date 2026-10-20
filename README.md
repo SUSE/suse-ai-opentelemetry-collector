@@ -52,11 +52,11 @@ namespace/name identifiers, including its existing cross-cluster identity limita
 
 ### Database client observations
 
-`transform/suse_ai_database` normalizes `db.system` to `db.system.name` and legacy
-`net.peer.name` / `net.peer.ip` / `net.peer.port` to `server.address` / `server.port`
-on database spans before the connectors run. Nonempty canonical attributes win;
-no destination identity is promoted to the calling resource, and no missing port
-or Kubernetes metadata is invented.
+`transform/suse_ai_database` normalizes `db.system` to `db.system.name` on database
+spans before the connectors run. On CLIENT spans only, it also maps legacy
+`net.peer.name` / `net.peer.ip` / `net.peer.port` to `server.address` / `server.port`.
+Nonempty canonical attributes win; no destination identity is promoted to the
+calling resource, and no missing port or Kubernetes metadata is invented.
 
 The AI StackPack can display unresolved Milvus, Qdrant, OpenSearch and Elasticsearch
 endpoints as client-observed dependencies. A database system without an address

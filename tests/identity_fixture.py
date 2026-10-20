@@ -307,12 +307,21 @@ class IdentityCases:
             ({"db.system": "", "net.peer.name": "not-a-database"}, (None, None, None)),
             ({"http.request.method": "GET", "net.peer.name": "web"}, (None, None, None)),
         ]
+        cases = [(3, values, result) for values, result in cases]
+        # Peer endpoints on non-client spans must remain untouched.
+        for kind in (0, 1, 2, 4, 5):
+            cases.extend([
+                (kind, {"db.system": "milvus", "net.peer.name": "calling-app.example",
+                        "net.peer.port": 52719}, ("milvus", None, None)),
+                (kind, {"db.system.name": "qdrant", "net.peer.ip": "192.0.2.1",
+                        "net.peer.port": 52719}, ("qdrant", None, None)),
+            ])
         now, spans, expected = time.time_ns(), [], {}
-        for i, (values, result) in enumerate(cases):
-            name = "database-case-" + str(i)
+        for i, (kind, values, result) in enumerate(cases):
+            name = f"database-case-{i}-kind-{kind}"
             expected[name] = result
             spans.append({"name": name, "traceId": f"{0xDC00+i:032x}", "spanId": f"{i+1:016x}",
-                          "kind": 3, "startTimeUnixNano": str(now), "endTimeUnixNano": str(now+1000000),
+                          "kind": kind, "startTimeUnixNano": str(now), "endTimeUnixNano": str(now+1000000),
                           "attributes": attrs(values)})
         self.send("traces", {"resourceSpans": [{
             "resource": {"attributes": attrs({"service.name": "identity-database-client"})},

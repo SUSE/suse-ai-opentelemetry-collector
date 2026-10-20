@@ -66,6 +66,7 @@ class Kubernetes(BaseHTTPRequestHandler):
                 self.wfile.flush()
                 self.closing.wait(20)
             except (BrokenPipeError, ConnectionResetError):
+                # Watch clients may disconnect during collector shutdown or reconnects.
                 pass
         else:
             self.wfile.write(json.dumps({'apiVersion': 'v1', 'kind': 'PodList',
@@ -250,8 +251,8 @@ class CollectionTest(unittest.TestCase):
 
     def test_actual_probe_paths_and_registry_authentication(self):
         paths = {path for _, path, _ in Target.requests}
-        self.assertTrue({'/api/tags', '/openapi.json', '/health', '/',
-                         '/api/model_registry/v1alpha3/registered_models'} <= paths)
+        self.assertLessEqual({'/api/tags', '/openapi.json', '/health', '/',
+                              '/api/model_registry/v1alpha3/registered_models'}, paths)
         for _, path, auth in Target.requests:
             if path == '/api/model_registry/v1alpha3/registered_models':
                 self.assertEqual(auth, 'Bearer fixture-token')

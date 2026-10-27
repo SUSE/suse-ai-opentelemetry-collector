@@ -28,6 +28,10 @@ See [`builder-config.yaml`](builder-config.yaml) for the full component manifest
 Optional [workload observation overlays](examples/README.md) provide per-pod
 HTTP availability checks and Ollama process residency metrics with real pod UID
 identity. OpenSearch aggregate metrics remain separate from per-pod probes.
+The image bundles these profiles as `/otelcol/workload-probes.yaml` and
+`/otelcol/ollama-runtime.yaml`, alongside `/otelcol/litellm-receiver.yaml`.
+Enable them with additional `--config` arguments; no external config download is
+needed. Each profile and all three together are validated during image builds.
 
 ### Explicit client dependencies
 

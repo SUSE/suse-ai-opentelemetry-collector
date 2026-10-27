@@ -9,6 +9,8 @@ on:
       - 'Containerfile'
       - 'collector-config.yaml'
       - 'litellm-receiver.yaml'
+      - 'examples/ollama-runtime.yaml'
+      - 'examples/workload-probes.yaml'
       - 'topologyexporter/**'
       - '.github/workflows/publish-container.yml'
       - 'suse-ai-opentelemetry-collector/**'

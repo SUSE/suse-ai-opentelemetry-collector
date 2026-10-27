@@ -1,9 +1,25 @@
 # Optional workload observations
 
 These overlays extend `collector-config.yaml` using standard receivers already
-included in the Collector. Mount the desired overlay beside the base config and
-pass a separate `--config` argument for each file. They are examples, not bundled
-image defaults. Remove unused product rules and auth extensions.
+included in the Collector. The image bundles `litellm-receiver.yaml`,
+`ollama-runtime.yaml` and `workload-probes.yaml` in `/otelcol/`, beside the base
+config. Enable a profile by passing a separate `--config` argument for its
+bundled path; no download is needed. Profiles are optional and are not enabled
+by the image's default command. Mount a customized copy when you need to remove
+unused product rules or auth extensions.
+
+```bash
+docker run --rm \
+  -e API_KEY -e ELASTICSEARCH_PASSWORD -e K8S_CLUSTER_NAME \
+  registry.suse.com/ai/containers/suse-ai-opentelemetry-collector:0.164.0 \
+  validate --config=/otelcol/collector-config.yaml \
+  --config=/otelcol/litellm-receiver.yaml \
+  --config=/otelcol/ollama-runtime.yaml \
+  --config=/otelcol/workload-probes.yaml
+```
+
+The registry tag is the intended release target; publication follows the SUSE
+registry release process. For local source builds:
 
 ```bash
 ./suse-ai-opentelemetry-collector/otelcol-custom validate \

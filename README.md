@@ -70,7 +70,7 @@ for the configuration and identity/expiry policy.
 
 ## Building
 
-Requires Go 1.26.0 or newer. The container and CI use Go 1.26.7. Build the checked-in distribution:
+Requires Go 1.26.10 or newer. The container and CI use Go 1.26.10. Both Go modules enforce this minimum, including when the distribution is regenerated. Build the checked-in distribution:
 
 ```bash
 cd suse-ai-opentelemetry-collector
@@ -78,16 +78,16 @@ go build -mod=readonly -o otelcol-custom .
 ./otelcol-custom --version
 ```
 
-The distribution version is `0.160.0`, matching the upstream collector release. It is set in `builder-config.yaml` and embedded in the generated executable. The update script keeps it aligned with the selected release tag.
+The distribution version is `0.164.0`, matching the upstream collector release. It is set in `builder-config.yaml` and embedded in the generated executable. The update script keeps it aligned with the selected release tag.
 
-To regenerate it from the manifest, install `go.opentelemetry.io/collector/cmd/builder@v0.160.0` and run `builder --config builder-config.yaml` from the repository root.
+To regenerate it from the manifest, install `go.opentelemetry.io/collector/cmd/builder@v0.164.0` and run `builder --config builder-config.yaml` from the repository root.
 
 ### Updating components
 
 The script [`scripts/update-collector.sh`](scripts/update-collector.sh) downloads the official K8s and contrib manifests from the selected release tag, merges in the Elasticsearch receiver and local Topology exporter, then regenerates, builds, and validates the distribution. It requires Go, curl, jq, and Mike Farah's yq v4.
 
 ```bash
-bash scripts/update-collector.sh v0.160.0
+bash scripts/update-collector.sh v0.164.0
 ```
 
 Omit the tag to select the latest stable release. If the new release needs a newer Go version than the Containerfile provides, the update fails with a message to update the build image before publishing.

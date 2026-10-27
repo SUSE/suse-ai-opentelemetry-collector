@@ -1,4 +1,4 @@
-FROM dp.apps.rancher.io/containers/go:1.26.7 AS build-stage
+FROM dp.apps.rancher.io/containers/go:1.26.10 AS build-stage
 
 WORKDIR /build
 

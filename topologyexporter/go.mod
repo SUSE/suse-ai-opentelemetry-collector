@@ -1,6 +1,6 @@
 module github.com/suse/suse-ai-opentelemetry-collector/topologyexporter
 
-go 1.25.0
+go 1.26.10
 
 require (
 	go.opentelemetry.io/collector/component v1.48.0

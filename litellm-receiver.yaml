@@ -1,7 +1,7 @@
 # Optional overlay: pass --config=collector-config.yaml --config=litellm-receiver.yaml.
 # The service account needs read access to services/endpoints/pods in LITELLM_NAMESPACE.
-# Enable LiteLLM's prometheus callback and either allow private metrics access or
-# configure authorization on this scrape job.
+# Protected metrics: mount the key file below (no automatic anonymous fallback).
+# For public metrics, use litellm-receiver-no-auth.yaml instead.
 receivers:
   prometheus/litellm:
     config:
@@ -9,6 +9,9 @@ receivers:
         - job_name: ${env:LITELLM_SERVICE_NAME:-litellm}
           scrape_interval: 15s
           metrics_path: /metrics/
+          authorization:
+            type: Bearer
+            credentials_file: ${env:LITELLM_METRICS_KEY_FILE:-/etc/litellm-metrics/key}
           kubernetes_sd_configs:
             - role: endpoints
               namespaces:

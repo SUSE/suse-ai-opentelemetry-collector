@@ -44,7 +44,7 @@ go install "go.opentelemetry.io/collector/cmd/builder@$COLLECTOR_TAG"
 # A newer builder can compile on an automatically downloaded Go toolchain while
 # the container still uses an older, fixed toolchain. Catch that before a PR.
 REQUIRED_GO=$(awk '/^go / {print $2; exit}' suse-ai-opentelemetry-collector/go.mod)
-IMAGE_GO=$(sed -n 's|^FROM dp.apps.rancher.io/containers/go:\([0-9.]*\).*|\1|p' Containerfile)
+IMAGE_GO=$(sed -nE 's|^FROM( --platform=[^ ]+)? dp.apps.rancher.io/containers/go:([0-9.]+).*|\2|p' Containerfile)
 if [[ -z "$IMAGE_GO" || "$(printf '%s\n' "$REQUIRED_GO" "$IMAGE_GO" | sort -V | head -n 1)" != "$REQUIRED_GO" ]]; then
   echo "Update the Containerfile Go image to at least $REQUIRED_GO before publishing $COLLECTOR_TAG" >&2
   exit 1

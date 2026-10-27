@@ -1,9 +1,10 @@
 # Optional workload observations
 
 These overlays extend `collector-config.yaml` using standard receivers already
-included in the Collector. The image bundles `litellm-receiver.yaml`,
-`ollama-runtime.yaml` and `workload-probes.yaml` in `/otelcol/`, beside the base
-config. Enable a profile by passing a separate `--config` argument for its
+included in the Collector. The image bundles both LiteLLM auth variants,
+`milvus.yaml`, `qdrant.yaml`, `opensearch.yaml`, `ollama-runtime.yaml` and
+`workload-probes.yaml` in `/otelcol/`, beside the base config. See the
+[profile selection and Helm values](../README.md#optional-product-inputs). Enable a profile by passing a separate `--config` argument for its
 bundled path; no download is needed. Profiles are optional and are not enabled
 by the image's default command. Mount a customized copy when you need to remove
 unused product rules or auth extensions.
@@ -11,6 +12,7 @@ unused product rules or auth extensions.
 ```bash
 docker run --rm \
   -e API_KEY -e ELASTICSEARCH_PASSWORD -e K8S_CLUSTER_NAME \
+  -v "$PWD/litellm-metrics-key:/etc/litellm-metrics/key:ro" \
   registry.suse.com/ai/containers/suse-ai-opentelemetry-collector:0.164.0 \
   validate --config=/otelcol/collector-config.yaml \
   --config=/otelcol/litellm-receiver.yaml \
@@ -29,7 +31,10 @@ registry release process. For local source builds:
 
 Use one scrape owner. When combining other overlays, retain all needed
 `service.extensions` entries because Collector configuration merging replaces
-lists. Keep existing product aggregate receivers on their own pipelines.
+lists. The bundled optional profiles already preserve that list when the base
+is loaded first. Choose exactly one LiteLLM mode; the authenticated mode requires
+a readable key file even during `validate`. Product aggregate receivers use
+their own pipelines and are disabled until explicitly selected.
 
 ## Per-pod availability probes
 

@@ -1,0 +1,55 @@
+# Requires LiteLLM litellm_settings.require_auth_for_metrics_endpoint: false.
+# Values for the upstream opentelemetry-collector chart (rendered with 0.178.0).
+# The image tag is the release target; use it after SUSE registry publication.
+mode: deployment
+image:
+  repository: registry.suse.com/ai/containers/suse-ai-opentelemetry-collector
+  tag: "0.164.0"
+configMap:
+  create: false
+  existingName: ""
+command:
+  name: otelcol/otelcol-custom
+  extraArgs:
+    - --config=/otelcol/collector-config.yaml
+    - --config=/otelcol/litellm-receiver-no-auth.yaml
+    # Enable only products you run; these may be combined in any order:
+    # - --config=/otelcol/milvus.yaml
+    # - --config=/otelcol/qdrant.yaml
+    # - --config=/otelcol/opensearch.yaml
+    # - --config=/otelcol/ollama-runtime.yaml
+    # - --config=/otelcol/workload-probes.yaml
+podSecurityContext:
+  runAsUser: 10001
+  runAsGroup: 10001
+  fsGroup: 10001
+extraVolumes: []
+extraVolumeMounts: []
+extraEnvs:
+  - name: API_KEY
+    valueFrom:
+      secretKeyRef:
+        name: suse-observability-credentials
+        key: api-key
+  - name: K8S_CLUSTER_NAME
+    value: my-cluster
+  - name: LITELLM_NAMESPACE
+    value: suse-private-ai
+  - name: LITELLM_K8S_SERVICE_NAME
+    value: litellm-router
+  - name: LITELLM_SERVICE_NAME
+    value: litellm
+  - name: LITELLM_METRICS_PORT
+    value: "4000"
+clusterRole:
+  create: true
+  rules:
+    - apiGroups: [""]
+      resources: [pods, namespaces, nodes, services, endpoints]
+      verbs: [get, list, watch]
+    - apiGroups: [apps]
+      resources: [replicasets, deployments, statefulsets, daemonsets]
+      verbs: [get, list, watch]
+    - apiGroups: [batch]
+      resources: [jobs, cronjobs]
+      verbs: [get, list, watch]

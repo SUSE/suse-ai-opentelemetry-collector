@@ -73,10 +73,12 @@ class CollectorIntegration(IdentityCases, unittest.TestCase):
         cls.temp = tempfile.TemporaryDirectory(prefix="collector-test-")
         cls.addClassCleanup(cls.temp.cleanup)
         cls.directory = Path(cls.temp.name)
+        key_file = cls.directory / "litellm-metrics-key"
+        key_file.write_text("test-metrics-key")
         cls.env = dict(os.environ, API_KEY="test-key", ELASTICSEARCH_PASSWORD="test-password",
                        K8S_CLUSTER_NAME="test-cluster", SUSE_AI_NAMESPACE="ai-test",
                        GPU_NAMESPACE="gpu-test", VLLM_METRICS_PORT="8000", OTEL_RESOURCE_ATTRIBUTES="",
-                       LITELLM_NAMESPACE="ai-test")
+                       LITELLM_NAMESPACE="ai-test", LITELLM_METRICS_KEY_FILE=str(key_file))
         for key in ("MILVUS_METRICS_ENDPOINT", "QDRANT_METRICS_ENDPOINT", "ELASTICSEARCH_ENDPOINT"):
             cls.env.pop(key, None)
         cls.original = yaml.safe_load((ROOT / "collector-config.yaml").read_text())
@@ -102,10 +104,11 @@ class CollectorIntegration(IdentityCases, unittest.TestCase):
         cls.env["GPU_METRICS_PORT"] = str(cls.servers[0].server_port)
         cls.env['VLLM_METRICS_PORT'] = '(' + '|'.join(str(s.server_port) for s in cls.servers) + ')'
         config = copy.deepcopy(cls.original)
-        overlay = yaml.safe_load((ROOT / "litellm-receiver.yaml").read_text())
-        for section in ("receivers", "processors"):
-            config[section].update(overlay[section])
-        config["service"]["pipelines"].update(overlay["service"]["pipelines"])
+        for profile in ("litellm-receiver-no-auth.yaml", "milvus.yaml", "qdrant.yaml", "opensearch.yaml"):
+            overlay = yaml.safe_load((ROOT / profile).read_text())
+            for section in ("receivers", "processors"):
+                config[section].update(overlay.get(section, {}))
+            config["service"]["pipelines"].update(overlay["service"]["pipelines"])
         cls.env["LITELLM_METRICS_PORT"] = cls.env["VLLM_METRICS_PORT"]
         cls.port, cls.es_port = free_port(), free_port()
         config["receivers"]["otlp"] = {"protocols": {"http": {"endpoint": f"127.0.0.1:{cls.port}"}}}
@@ -128,6 +131,10 @@ class CollectorIntegration(IdentityCases, unittest.TestCase):
             else:
                 for group in job["static_configs"]:
                     group["targets"] = targets[:1]
+        for product in ("milvus", "qdrant"):
+            job = config["receivers"]["prometheus/" + product]["config"]["scrape_configs"][0]
+            job["scrape_interval"], job["scrape_timeout"] = "1s", "1s"
+            job["static_configs"][0]["targets"] = targets[:1]
         for suffix, namespace in (("missing", None), ("empty", ""), ("valid", "tenant-scrape")):
             labels = {"suse_ai_product": "vllm", "gen_ai_system": "vllm"}
             if namespace is not None:
@@ -374,7 +381,8 @@ class CollectorIntegration(IdentityCases, unittest.TestCase):
     def test_scraper_resources_keep_target_identity(self):
         def scrape_resources():
             expected = {"my-vllm", "milvus", "qdrant", "nvidia-dcgm-exporter"}
-            rows = [row for row in self.resources("metrics/prometheus", "resourceMetrics")
+            rows = [row for pipeline in ("metrics/prometheus", "metrics/milvus", "metrics/qdrant")
+                    for row in self.resources(pipeline, "resourceMetrics")
                     if unpack(row["resource"]["attributes"]).get("service.name") in expected]
             names = {unpack(row["resource"]["attributes"]).get("service.name") for row in rows}
             return rows if names == expected else None

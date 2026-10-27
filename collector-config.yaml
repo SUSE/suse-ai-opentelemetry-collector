@@ -52,28 +52,6 @@ receivers:
           target_label: k8s_node_name
         - source_labels: [__meta_kubernetes_namespace]
           target_label: k8s_namespace_name
-      - job_name: milvus
-        scrape_interval: 15s
-        metrics_path: /metrics
-        static_configs:
-        - targets:
-          - ${env:MILVUS_METRICS_ENDPOINT:-milvus.${env:SUSE_AI_NAMESPACE:-suse-private-ai}.svc.cluster.local:9091}
-          labels:
-            service_name: milvus
-            service_namespace: ${env:SUSE_AI_NAMESPACE:-suse-private-ai}
-            db_system: milvus
-            suse_ai_product: milvus
-      - job_name: qdrant
-        scrape_interval: 10s
-        metrics_path: /metrics
-        static_configs:
-        - targets:
-          - ${env:QDRANT_METRICS_ENDPOINT:-qdrant.${env:SUSE_AI_NAMESPACE:-suse-private-ai}.svc.cluster.local:6333}
-          labels:
-            service_name: qdrant
-            service_namespace: ${env:SUSE_AI_NAMESPACE:-suse-private-ai}
-            db_system: qdrant
-            suse_ai_product: qdrant
       - job_name: gpu-metrics
         scrape_interval: 10s
         kubernetes_sd_configs:
@@ -109,18 +87,6 @@ receivers:
           target_label: pod_name
         - source_labels: [container]
           target_label: container_name
-  elasticsearch:
-    endpoint: ${env:ELASTICSEARCH_ENDPOINT:-http://opensearch-cluster-master-headless.${env:SUSE_AI_NAMESPACE:-suse-private-ai}.svc.cluster.local:9200}
-    username: ${env:ELASTICSEARCH_USERNAME:-admin}
-    password: ${env:ELASTICSEARCH_PASSWORD}
-    tls:
-      insecure_skip_verify: false
-    collection_interval: 10s
-    metrics:
-      elasticsearch.node.fs.disk.total:
-        enabled: true
-      elasticsearch.node.fs.disk.available:
-        enabled: true
 processors:
   memory_limiter:
     check_interval: 1s
@@ -274,20 +240,6 @@ processors:
       - set(resource.attributes["hw.type"], attributes["hw_type"]) where attributes["hw_type"] != nil
       - set(resource.attributes["gen_ai.system"], attributes["gen_ai_system"]) where resource.attributes["gen_ai.system"] == nil and attributes["gen_ai_system"] != nil
       - set(resource.attributes["db.system"], attributes["db_system"]) where resource.attributes["db.system"] == nil and attributes["db_system"] != nil
-  resource/elasticsearch:
-    attributes:
-    - key: service.name
-      value: ${env:ELASTICSEARCH_SERVICE_NAME:-opensearch}
-      action: insert
-    - key: service.namespace
-      value: ${env:SUSE_AI_NAMESPACE:-suse-private-ai}
-      action: insert
-    - key: db.system.name
-      value: ${env:ELASTICSEARCH_SYSTEM:-opensearch}
-      action: insert
-    - key: suse.ai.product
-      value: ${env:ELASTICSEARCH_SYSTEM:-opensearch}
-      action: insert
   filter/suse_ai_observations:
     error_mode: propagate
     metrics:
@@ -447,18 +399,6 @@ service:
       - memory_limiter
       - transform/prometheus
       - transform/kubernetes_identity
-      - resource
-      - transform/suse_ai_resource
-      - transform/genai-normalize
-      - batch
-      exporters:
-      - otlp
-    metrics/elasticsearch:
-      receivers:
-      - elasticsearch
-      processors:
-      - memory_limiter
-      - resource/elasticsearch
       - resource
       - transform/suse_ai_resource
       - transform/genai-normalize

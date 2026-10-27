@@ -122,16 +122,11 @@ The default configuration is for a Kubernetes gateway. Supply the deployment var
 | `OTLP_ENDPOINT` | `suse-observability-otel-collector.suse-observability.svc.cluster.local:4317` |
 | `OTLP_INSECURE` | `true` for the default in-cluster plaintext gRPC endpoint; use `false` for TLS |
 | `VLLM_METRICS_PORT` | `8000`; discovered vLLM service port |
-| `MILVUS_METRICS_ENDPOINT` | `milvus.<SUSE_AI_NAMESPACE>.svc.cluster.local:9091` |
-| `QDRANT_METRICS_ENDPOINT` | `qdrant.<SUSE_AI_NAMESPACE>.svc.cluster.local:6333` |
 | `GPU_NAMESPACE` / `GPU_METRICS_PORT` | `gpu-operator` / `9400`; DCGM exporter discovery |
-| `ELASTICSEARCH_ENDPOINT` | `http://opensearch-cluster-master-headless.<SUSE_AI_NAMESPACE>.svc.cluster.local:9200`; set an HTTPS URL for secured clusters |
-| `ELASTICSEARCH_USERNAME` / `ELASTICSEARCH_PASSWORD` | `admin` / required password for the configured search cluster |
-| `ELASTICSEARCH_SERVICE_NAME` / `ELASTICSEARCH_SYSTEM` | `opensearch` / `opensearch`; use `elasticsearch` for an Elasticsearch deployment |
 
 The Kubernetes service account needs read access (`get`, `list`, `watch`) to pods and their workload owners for enrichment, and services/endpoints for Prometheus discovery. Include namespaces, nodes, ReplicaSets, Deployments, StatefulSets, DaemonSets, Jobs, and CronJobs for the configured metadata extraction. Existing `service.namespace` takes precedence; otherwise the pod's namespace is used, followed by `default` for resources without a namespace. Kubernetes cluster identity is added only when pod or node metadata is present. A trace without Kubernetes metadata is still exported.
 
-Remove unused scraper receivers and their pipelines when the corresponding infrastructure is not deployed. To use another OTLP backend, configure its endpoint, TLS, and authorization headers in the exporter. Configure the receiving SUSE Observability OTel collector to supply resource topology to `sts_topo_opentelemetry_collector`; the SUSE AI collector sends OTLP and does not publish directly to Kafka. Verify the integration with `sts topology-sync list` and `sts topology-sync describe` against that backend.
+Milvus, Qdrant and OpenSearch inputs are disabled in the base; enable their bundled profiles only when deployed (see below). vLLM and DCGM use Kubernetes endpoint discovery and have no scrape targets when their matching Services are absent. Discovery still requires a reachable Kubernetes API and the RBAC permissions above. To use another OTLP backend, configure its endpoint, TLS, and authorization headers in the exporter. Configure the receiving SUSE Observability OTel collector to supply resource topology to `sts_topo_opentelemetry_collector`; the SUSE AI collector sends OTLP and does not publish directly to Kafka. Verify the integration with `sts topology-sync list` and `sts topology-sync describe` against that backend.
 
 The collector exposes OTLP on **4317** (gRPC) and **4318** (HTTP), Jaeger on **14250** (gRPC) and **14268** (Thrift HTTP), and a health endpoint on **13133**.
 
@@ -189,7 +184,8 @@ See [`ARCH.md`](ARCH.md) for a detailed description of the three-layer observabi
 
 ## Optional LiteLLM receiver
 
-The image includes `/otelcol/litellm-receiver.yaml`. Enable it with both
+The image includes `/otelcol/litellm-receiver.yaml` for protected metrics and
+`/otelcol/litellm-receiver-no-auth.yaml` for public metrics. Choose exactly one. Enable it with both
 `--config=/otelcol/collector-config.yaml --config=/otelcol/litellm-receiver.yaml`.
 Set the actual `K8S_CLUSTER_NAME` and `LITELLM_NAMESPACE` (default `suse-private-ai`);
 `LITELLM_SERVICE_NAME`, `LITELLM_K8S_SERVICE_NAME`, and `LITELLM_METRICS_PORT` default
@@ -198,7 +194,103 @@ to services/endpoints/pods in that namespace. This adds a separate metrics pipel
 
 Enable LiteLLM's `prometheus` callback and configure access to `/metrics/`. Either
 allow unauthenticated private metrics via `require_auth_for_metrics_endpoint: false`
-or configure scrape authorization. Use a single scrape owner. Pod UIDs provide
+or use the authenticated profile with a mounted key as described below. Use a single scrape owner. Pod UIDs provide
 real replica identity; native metric labels and cumulative counters are retained.
 When also using LiteLLM's `otel` callback, configure matching service namespace/name
 and instance identity in the SDK.
+
+
+The authenticated scrape job uses:
+
+```yaml
+authorization:
+  type: Bearer
+  credentials_file: ${env:LITELLM_METRICS_KEY_FILE:-/etc/litellm-metrics/key}
+```
+
+Set `litellm_settings.require_auth_for_metrics_endpoint: true` and
+`litellm_settings.callbacks: [prometheus]` in LiteLLM. Put a key accepted by that
+proxy in the `key` entry of a Kubernetes Secret named `litellm-metrics`, in the
+Collector namespace. The profile reads the file, not the key value from an env
+var. A missing/unreadable file fails Collector validation/startup. A wrong key
+causes a failed scrape (`up=0`); there is no anonymous fallback. Prometheus reads
+the file on each request, so mount the Secret directory without `subPath` to
+allow Kubernetes Secret updates to reach it.
+
+For `litellm_settings.require_auth_for_metrics_endpoint: false`, select
+`/otelcol/litellm-receiver-no-auth.yaml`. It sends no Authorization header and
+requires neither the Secret nor `LITELLM_METRICS_KEY_FILE`. Do not load both
+LiteLLM variants. An empty path or an optional Secret is not the public mode.
+
+Complete Helm values, including the exact `extraVolumes`, `extraVolumeMounts`
+and `extraEnvs`, are in [authenticated LiteLLM](examples/helm-litellm-auth.yaml)
+and [public LiteLLM](examples/helm-litellm-no-auth.yaml). They target the upstream
+`opentelemetry-collector` chart (rendered with version 0.178.0). These examples
+set `configMap.create: false` and pass the bundled base first through
+`command.extraArgs`; the chart must not load `/conf/relay.yaml` as well. The
+Secret's `0440` mode and pod group `10001` allow the image's non-root user to read
+it. Set the real cluster/namespace and the existing backend API-key Secret.
+
+## Optional product inputs
+
+The image bundles these independent profiles beside the base config. Add one
+`--config=/otelcol/<file>` entry to Helm `command.extraArgs` for each product you
+run; omit it to disable that input. No image/config edits or GitHub downloads are
+needed. For example, base + Milvus + Qdrant:
+
+```yaml
+command:
+  name: otelcol/otelcol-custom
+  extraArgs:
+    - --config=/otelcol/collector-config.yaml
+    - --config=/otelcol/milvus.yaml
+    - --config=/otelcol/qdrant.yaml
+```
+
+| Bundled profile | Environment variables and defaults |
+| --- | --- |
+| `/otelcol/milvus.yaml` | `MILVUS_METRICS_ENDPOINT=milvus.<SUSE_AI_NAMESPACE>.svc.cluster.local:9091`; `SUSE_AI_NAMESPACE=suse-private-ai` |
+| `/otelcol/qdrant.yaml` | `QDRANT_METRICS_ENDPOINT=qdrant.<SUSE_AI_NAMESPACE>.svc.cluster.local:6333`; `SUSE_AI_NAMESPACE=suse-private-ai` |
+| `/otelcol/opensearch.yaml` | `ELASTICSEARCH_ENDPOINT=http://opensearch-cluster-master-headless.<SUSE_AI_NAMESPACE>.svc.cluster.local:9200`; `ELASTICSEARCH_USERNAME=admin`; `ELASTICSEARCH_PASSWORD` required for secured clusters; `ELASTICSEARCH_SERVICE_NAME=opensearch`; `ELASTICSEARCH_SYSTEM=opensearch`; `SUSE_AI_NAMESPACE=suse-private-ai` |
+
+Milvus/Qdrant targets are `host:port` (no URL scheme). The OpenSearch endpoint is
+a URL; use HTTPS for secured clusters. Existing `ELASTICSEARCH_*` names remain
+supported for both OpenSearch and Elasticsearch. Supply passwords with
+`extraEnvs[].valueFrom.secretKeyRef`, for example:
+
+```yaml
+extraEnvs:
+  # Append to the common extraEnvs in the complete examples above.
+  - name: ELASTICSEARCH_ENDPOINT
+    value: https://opensearch-cluster-master-headless.suse-private-ai.svc.cluster.local:9200
+  - name: ELASTICSEARCH_PASSWORD
+    valueFrom:
+      secretKeyRef:
+        name: opensearch-metrics
+        key: password
+```
+
+Each profile defines a separate receiver and pipeline (`metrics/milvus`,
+`metrics/qdrant`, `metrics/elasticsearch`). They do not overwrite the base
+Prometheus scrape list or any `service.extensions` list. Load the base first;
+optional profile order then does not matter. The workload profile owns the
+combined extension list and retains `health_check`. All 96 supported subsets
+(base plus any of the five product/workload profiles, and none/one LiteLLM mode)
+are validated with the Collector, including reversed profile order. The
+`workload-probes.yaml` OpenSearch **pod health probe** is independent of the
+`opensearch.yaml` aggregate metrics input; omit workload probes too if unwanted.
+
+Helm also replaces lists: keep the full desired `command.extraArgs` and
+`extraEnvs` lists together in your values file when combining these examples.
+
+Run the composition and no-products regression checks with:
+
+```bash
+python3 tests/test_profiles.py --collector /path/to/otelcol-custom
+python3 tests/test_litellm_auth.py --collector /path/to/otelcol-custom
+```
+
+The second command requires Docker and pull access to the pinned SUSE LiteLLM
+1.81.13 image. It starts real proxies with authentication on/off, checks rejected
+anonymous/wrong-key requests, and verifies exported metrics with/without a key
+file. It removes its test containers when finished.

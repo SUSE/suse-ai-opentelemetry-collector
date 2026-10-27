@@ -5,7 +5,10 @@ on:
     paths:
       - 'builder-config.yaml'
       - 'collector-config.yaml'
-      - 'litellm-receiver.yaml'
+      - 'litellm-receiver*.yaml'
+      - 'milvus.yaml'
+      - 'qdrant.yaml'
+      - 'opensearch.yaml'
       - 'examples/**'
       - 'Containerfile'
       - 'suse-ai-opentelemetry-collector/**'
@@ -18,7 +21,10 @@ on:
     paths:
       - 'builder-config.yaml'
       - 'collector-config.yaml'
-      - 'litellm-receiver.yaml'
+      - 'litellm-receiver*.yaml'
+      - 'milvus.yaml'
+      - 'qdrant.yaml'
+      - 'opensearch.yaml'
       - 'examples/**'
       - 'Containerfile'
       - 'suse-ai-opentelemetry-collector/**'
@@ -59,4 +65,5 @@ jobs:
       - name: Validate configuration and telemetry behavior
         run: |
           python3 tests/test_collector.py --collector "$RUNNER_TEMP/otelcol-custom"
+          python3 tests/test_profiles.py --collector "$RUNNER_TEMP/otelcol-custom"
           python3 tests/test_workload_collection.py --collector "$RUNNER_TEMP/otelcol-custom"

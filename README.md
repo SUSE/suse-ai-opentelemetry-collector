@@ -212,8 +212,8 @@ Set `litellm_settings.require_auth_for_metrics_endpoint: true` and
 `litellm_settings.callbacks: [prometheus]` in LiteLLM. Put a key accepted by that
 proxy in the `key` entry of a Kubernetes Secret named `litellm-metrics`, in the
 Collector namespace. The profile reads the file, not the key value from an env
-var. A missing/unreadable file fails Collector validation/startup. A wrong key
-causes a failed scrape (`up=0`); there is no anonymous fallback. Prometheus reads
+var. A missing file fails Collector validation/startup. An unreadable file or a
+wrong key causes a failed scrape (`up=0`); there is no anonymous fallback. Prometheus reads
 the file on each request, so mount the Secret directory without `subPath` to
 allow Kubernetes Secret updates to reach it.
 

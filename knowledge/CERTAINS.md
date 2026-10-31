@@ -22,3 +22,14 @@ Verified on 2026-09-09 on `fix/collector-v0.160.0-release`, based on `5051b29781
 - Publication paths include collector configuration and exporter changes. A new validation workflow builds, runs race tests, and exercises telemetry behavior. The updater uses matching release-tag manifests, builds and validates the result, and checks the container Go version. An isolated update to v0.160.0 passed.
 - The unstripped audit binary scan with `govulncheck` v1.8.0 reports zero affected symbols or imported packages and five module-level advisories. The stripped image binary causes the scanner to fall back to module-level precision. The audit binaries and versioned release candidate have the same 509 dependency module versions; the affected SSH, OpenPGP, and S3 crypto packages are absent from the collector's dependency-package list.
 - Live topology synchronization was not verified: the configured local SUSE Observability endpoint refused the CLI connection.
+
+
+### Optional input and metrics-auth validation — 2026-10-27
+
+- The local 0.164.0 candidate provides authenticated and public LiteLLM profiles. The authenticated profile uses `LITELLM_METRICS_KEY_FILE` (default `/etc/litellm-metrics/key`); missing files fail Collector validation. Public metrics use `litellm-receiver-no-auth.yaml` without a Secret.
+- Real SUSE LiteLLM 1.81.13 proxies (image index `sha256:7b9cbd3905f0d335630c2605b784e64ff69b6b2a0d12b3fc68f53dcf21fb6a97`) were tested with `litellm_settings.require_auth_for_metrics_endpoint` true/false. Authenticated and public scrapes exported `up=1` and real proxy metrics. The protected endpoint returned 401 anonymously; a wrong file key produced `up=0`.
+- Milvus, Qdrant and Elasticsearch aggregate receivers/pipelines moved out of the base into `milvus.yaml`, `qdrant.yaml` and `opensearch.yaml`. Base vLLM/DCGM scrape jobs use Kubernetes discovery only.
+- All 96 supported combinations of the five product/workload profiles and none/one LiteLLM mode validated with the built 0.164.0 binary. Forward/reversed optional-profile order preserved all pipeline, receiver and extension entries. The base must be loaded first; both LiteLLM modes together are unsupported.
+- With an empty Kubernetes API fixture, the real Collector ran for 22 seconds after readiness (two 10-second scrape intervals), listed/watched both discovery namespaces, and logged no scrape/connection errors. The existing `cumulativetodelta` alias deprecation warning remains. This check used local API/export fixtures, not a deployed empty cluster.
+- The existing 14 Collector integration tests and 3 workload tests passed after adapting product scrape assertions to separate pipelines. Helm examples rendered with upstream chart 0.178.0; only bundled config paths were passed, with a readable Secret directory in authenticated mode and no key volume in public mode.
+- No source branch, PR update, image, or tag was pushed as part of this work.

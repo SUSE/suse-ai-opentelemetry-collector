@@ -1,0 +1,45 @@
+# Optional OpenSearch / Elasticsearch aggregate metrics; load after the base.
+receivers:
+  elasticsearch:
+    endpoint: ${env:ELASTICSEARCH_ENDPOINT:-http://opensearch-cluster-master-headless.${env:SUSE_AI_NAMESPACE:-suse-private-ai}.svc.cluster.local:9200}
+    username: ${env:ELASTICSEARCH_USERNAME:-admin}
+    password: ${env:ELASTICSEARCH_PASSWORD}
+    tls:
+      insecure_skip_verify: false
+    collection_interval: 10s
+    metrics:
+      elasticsearch.node.fs.disk.total:
+        enabled: true
+      elasticsearch.node.fs.disk.available:
+        enabled: true
+
+processors:
+  resource/elasticsearch:
+    attributes:
+    - key: service.name
+      value: ${env:ELASTICSEARCH_SERVICE_NAME:-opensearch}
+      action: insert
+    - key: service.namespace
+      value: ${env:SUSE_AI_NAMESPACE:-suse-private-ai}
+      action: insert
+    - key: db.system.name
+      value: ${env:ELASTICSEARCH_SYSTEM:-opensearch}
+      action: insert
+    - key: suse.ai.product
+      value: ${env:ELASTICSEARCH_SYSTEM:-opensearch}
+      action: insert
+
+service:
+  pipelines:
+    metrics/elasticsearch:
+      receivers:
+      - elasticsearch
+      processors:
+      - memory_limiter
+      - resource/elasticsearch
+      - resource
+      - transform/suse_ai_resource
+      - transform/genai-normalize
+      - batch
+      exporters:
+      - otlp

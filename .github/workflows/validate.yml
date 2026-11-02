@@ -5,6 +5,11 @@ on:
     paths:
       - 'builder-config.yaml'
       - 'collector-config.yaml'
+      - 'litellm-receiver*.yaml'
+      - 'milvus.yaml'
+      - 'qdrant.yaml'
+      - 'opensearch.yaml'
+      - 'examples/**'
       - 'Containerfile'
       - 'suse-ai-opentelemetry-collector/**'
       - 'topologyexporter/**'
@@ -16,6 +21,11 @@ on:
     paths:
       - 'builder-config.yaml'
       - 'collector-config.yaml'
+      - 'litellm-receiver*.yaml'
+      - 'milvus.yaml'
+      - 'qdrant.yaml'
+      - 'opensearch.yaml'
+      - 'examples/**'
       - 'Containerfile'
       - 'suse-ai-opentelemetry-collector/**'
       - 'topologyexporter/**'
@@ -36,7 +46,7 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
-          go-version: '1.26.7'
+          go-version: '1.26.10'
           cache-dependency-path: |
             suse-ai-opentelemetry-collector/go.sum
             topologyexporter/go.sum
@@ -53,4 +63,7 @@ jobs:
       - name: Install integration test dependency
         run: python3 -m pip install -r tests/requirements.txt
       - name: Validate configuration and telemetry behavior
-        run: python3 tests/test_collector.py --collector "$RUNNER_TEMP/otelcol-custom"
+        run: |
+          python3 tests/test_collector.py --collector "$RUNNER_TEMP/otelcol-custom"
+          python3 tests/test_profiles.py --collector "$RUNNER_TEMP/otelcol-custom"
+          python3 tests/test_workload_collection.py --collector "$RUNNER_TEMP/otelcol-custom"

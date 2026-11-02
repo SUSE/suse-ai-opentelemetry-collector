@@ -1,0 +1,33 @@
+# Optional profile: load after /otelcol/collector-config.yaml.
+# Uses its own receiver and pipeline so other scrape jobs are preserved.
+receivers:
+  prometheus/qdrant:
+    config:
+      scrape_configs:
+      - job_name: qdrant
+        scrape_interval: 10s
+        metrics_path: /metrics
+        static_configs:
+        - targets:
+          - ${env:QDRANT_METRICS_ENDPOINT:-qdrant.${env:SUSE_AI_NAMESPACE:-suse-private-ai}.svc.cluster.local:6333}
+          labels:
+            service_name: qdrant
+            service_namespace: ${env:SUSE_AI_NAMESPACE:-suse-private-ai}
+            db_system: qdrant
+            suse_ai_product: qdrant
+
+service:
+  pipelines:
+    metrics/qdrant:
+      receivers:
+      - prometheus/qdrant
+      processors:
+      - memory_limiter
+      - transform/prometheus
+      - transform/kubernetes_identity
+      - resource
+      - transform/suse_ai_resource
+      - transform/genai-normalize
+      - batch
+      exporters:
+      - otlp

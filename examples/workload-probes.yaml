@@ -1,0 +1,109 @@
+# Optional overlay: actual pod endpoints, not load-balanced Service addresses.
+# Merge with collector-config.yaml and configure the variables in README.md.
+extensions:
+  k8s_observer/ai_workload_probes:
+    auth_type: serviceAccount
+    observe_pods: true
+    observe_nodes: false
+    observe_services: false
+    observe_ingresses: false
+    namespaces:
+    - ${env:OLLAMA_NAMESPACE:-suse-private-ai}
+    - ${env:MCPO_NAMESPACE:-suse-private-ai}
+    - ${env:MLFLOW_NAMESPACE:-suse-private-ai}
+    - ${env:MODEL_REGISTRY_NAMESPACE:-kubeflow}
+    - ${env:OPENSEARCH_NAMESPACE:-suse-private-ai}
+  bearertokenauth/ai_model_registry:
+    filename: /var/run/secrets/kubernetes.io/serviceaccount/token
+  basicauth/ai_opensearch:
+    client_auth:
+      username: ${env:ELASTICSEARCH_USERNAME:-admin}
+      password: ${env:ELASTICSEARCH_PASSWORD}
+receivers:
+  receiver_creator/ai_workload_probes:
+    watch_observers: [k8s_observer/ai_workload_probes]
+    resource_attributes:
+      port:
+        service.namespace: '`pod.namespace`'
+        service.instance.id: '`pod.uid`'
+        k8s.namespace.name: '`pod.namespace`'
+        k8s.pod.name: '`pod.name`'
+        k8s.pod.uid: '`pod.uid`'
+        k8s.cluster.name: ${env:K8S_CLUSTER_NAME}
+        suse.ai.observation.kind: http-probe
+    receivers:
+      http_check/ollama:
+        rule: type == "port" && pod.namespace == "${env:OLLAMA_NAMESPACE:-suse-private-ai}" && pod.labels["app.kubernetes.io/name"] == "ollama" && port == 11434
+        config:
+          collection_interval: 30s
+          targets:
+          - endpoint: 'http://`endpoint`/api/tags'
+            timeout: 5s
+          metrics: &probe_metrics
+            httpcheck.duration: {enabled: true}
+            httpcheck.response.size: {enabled: true}
+        resource_attributes:
+          service.name: ${env:OLLAMA_SERVICE_NAME:-ollama}
+          suse.ai.product: ollama
+      http_check/mcpo:
+        rule: type == "port" && pod.namespace == "${env:MCPO_NAMESPACE:-suse-private-ai}" && pod.labels["app.kubernetes.io/name"] == "open-webui-mcpo" && port == 8000
+        config:
+          collection_interval: 30s
+          targets:
+          - endpoint: 'http://`endpoint`${env:MCPO_HEALTH_PATH:-/openapi.json}'
+            timeout: 5s
+          metrics: *probe_metrics
+        resource_attributes:
+          service.name: ${env:MCPO_SERVICE_NAME:-open-webui-mcpo}
+          suse.ai.component.type: mcp-server
+      http_check/mlflow:
+        rule: type == "port" && pod.namespace == "${env:MLFLOW_NAMESPACE:-suse-private-ai}" && pod.labels["app.kubernetes.io/name"] == "mlflow" && port == 5000
+        config:
+          collection_interval: 30s
+          targets:
+          - endpoint: 'http://`endpoint`/health'
+            timeout: 5s
+          metrics: *probe_metrics
+        resource_attributes:
+          service.name: ${env:MLFLOW_SERVICE_NAME:-mlflow}
+          suse.ai.product: mlflow
+      http_check/model_registry:
+        rule: type == "port" && pod.namespace == "${env:MODEL_REGISTRY_NAMESPACE:-kubeflow}" && pod.labels["app.kubernetes.io/component"] == "model-registry-server" && port == 8080
+        config:
+          collection_interval: 30s
+          targets:
+          - endpoint: 'http://`endpoint`/api/model_registry/v1alpha3/registered_models'
+            timeout: 5s
+            auth: {authenticator: bearertokenauth/ai_model_registry}
+            validations:
+            - contains: '"items"'
+          metrics:
+            <<: *probe_metrics
+            httpcheck.validation.passed: {enabled: true}
+            httpcheck.validation.failed: {enabled: true}
+        resource_attributes:
+          service.name: ${env:MODEL_REGISTRY_SERVICE_NAME:-kubeflow-model-registry}
+          suse.ai.product: kubeflow-model-registry
+      http_check/opensearch:
+        rule: type == "port" && pod.namespace == "${env:OPENSEARCH_NAMESPACE:-suse-private-ai}" && pod.labels["app.kubernetes.io/name"] == "opensearch" && port == 9200
+        config:
+          collection_interval: 30s
+          targets:
+          - endpoint: 'https://`endpoint`/'
+            timeout: 5s
+            auth: {authenticator: basicauth/ai_opensearch}
+            tls:
+              insecure_skip_verify: false
+              ca_file: ${env:OPENSEARCH_CA_FILE:-}
+              server_name_override: ${env:OPENSEARCH_TLS_SERVER_NAME:-}
+          metrics: *probe_metrics
+        resource_attributes:
+          service.name: ${env:ELASTICSEARCH_SERVICE_NAME:-opensearch}
+          suse.ai.product: opensearch
+service:
+  extensions: [health_check, k8s_observer/ai_workload_probes, bearertokenauth/ai_model_registry, basicauth/ai_opensearch]
+  pipelines:
+    metrics/workload_probes:
+      receivers: [receiver_creator/ai_workload_probes]
+      processors: [memory_limiter, k8s_attributes, transform/suse_ai_resource, batch]
+      exporters: [otlp]

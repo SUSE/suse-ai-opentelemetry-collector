@@ -1,0 +1,61 @@
+# Optional overlay for the per-process sidecar in the observability extension's
+# integrations/ollama directory. The metrics are reported allocation, not usage.
+receivers:
+  prometheus/ollama_runtime:
+    config:
+      scrape_configs:
+      - job_name: ${env:OLLAMA_SERVICE_NAME:-ollama}
+        scrape_interval: 30s
+        scrape_timeout: 10s
+        kubernetes_sd_configs:
+        - role: pod
+          namespaces:
+            names: ["${env:OLLAMA_NAMESPACE:-suse-private-ai}"]
+        relabel_configs:
+        - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_name]
+          regex: ollama
+          action: keep
+        - source_labels: [__meta_kubernetes_pod_container_port_name]
+          regex: ollama-metrics
+          action: keep
+        - source_labels: [__meta_kubernetes_pod_uid]
+          regex: .+
+          action: keep
+        - source_labels: [__meta_kubernetes_namespace]
+          target_label: k8s_namespace_name
+        - source_labels: [__meta_kubernetes_pod_uid]
+          target_label: k8s_pod_uid
+        - source_labels: [__meta_kubernetes_pod_name]
+          target_label: k8s_pod_name
+        - source_labels: [__meta_kubernetes_pod_node_name]
+          target_label: k8s_node_name
+processors:
+  transform/ollama_runtime_identity:
+    error_mode: propagate
+    metric_statements:
+    - context: datapoint
+      statements:
+      - set(resource.attributes["service.namespace"], datapoint.attributes["k8s_namespace_name"])
+      - set(resource.attributes["service.instance.id"], datapoint.attributes["k8s_pod_uid"])
+      - set(resource.attributes["k8s.namespace.name"], datapoint.attributes["k8s_namespace_name"])
+      - set(resource.attributes["k8s.pod.uid"], datapoint.attributes["k8s_pod_uid"])
+      - set(resource.attributes["k8s.pod.name"], datapoint.attributes["k8s_pod_name"])
+      - set(resource.attributes["k8s.node.name"], datapoint.attributes["k8s_node_name"])
+      - delete_key(datapoint.attributes, "k8s_namespace_name")
+      - delete_key(datapoint.attributes, "k8s_pod_uid")
+      - delete_key(datapoint.attributes, "k8s_pod_name")
+      - delete_key(datapoint.attributes, "k8s_node_name")
+  resource/ollama_runtime:
+    attributes:
+    - key: k8s.cluster.name
+      value: ${env:K8S_CLUSTER_NAME}
+      action: insert
+    - key: suse.ai.product
+      value: ollama
+      action: insert
+service:
+  pipelines:
+    metrics/ollama_runtime:
+      receivers: [prometheus/ollama_runtime]
+      processors: [memory_limiter, transform/ollama_runtime_identity, resource/ollama_runtime, transform/suse_ai_resource, batch]
+      exporters: [otlp]

@@ -1,0 +1,33 @@
+# Optional profile: load after /otelcol/collector-config.yaml.
+# Uses its own receiver and pipeline so other scrape jobs are preserved.
+receivers:
+  prometheus/milvus:
+    config:
+      scrape_configs:
+      - job_name: milvus
+        scrape_interval: 15s
+        metrics_path: /metrics
+        static_configs:
+        - targets:
+          - ${env:MILVUS_METRICS_ENDPOINT:-milvus.${env:SUSE_AI_NAMESPACE:-suse-private-ai}.svc.cluster.local:9091}
+          labels:
+            service_name: milvus
+            service_namespace: ${env:SUSE_AI_NAMESPACE:-suse-private-ai}
+            db_system: milvus
+            suse_ai_product: milvus
+
+service:
+  pipelines:
+    metrics/milvus:
+      receivers:
+      - prometheus/milvus
+      processors:
+      - memory_limiter
+      - transform/prometheus
+      - transform/kubernetes_identity
+      - resource
+      - transform/suse_ai_resource
+      - transform/genai-normalize
+      - batch
+      exporters:
+      - otlp

@@ -2,7 +2,7 @@
 
 module go.opentelemetry.io/collector/cmd/builder
 
-go 1.26.0
+go 1.26.10
 
 require (
 	github.com/open-telemetry/opentelemetry-collector-contrib/connector/countconnector v0.164.1

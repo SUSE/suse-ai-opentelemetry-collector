@@ -1,0 +1,42 @@
+SUSE AI OpenTelemetry Collector 0.164.0 bundles optional product profiles and adds LiteLLM metrics authentication using a mounted key file.
+
+## Changes
+
+- Use Collector core 0.164.0 and contrib 0.164.1, with Go 1.26.10 in both modules, CI and container builds. Preserve reviewed dependency versions during image builds, including go-jose v4.1.6.
+- Normalize service namespaces, agent names, GenAI resource context and database-system aliases while preserving canonical attributes and original SDK telemetry. Restrict legacy address/port fallback to CLIENT spans.
+- Combine paired Service Graph observations and verified same-cluster CLIENT observations for native service relationships. Remove zero/idle topology observations and retain namespace/instance dimensions and actual pod identity.
+- Bundle the base configuration and every supported optional profile in the linux/amd64 and linux/arm64 images.
+
+## Upgrade configuration
+
+Milvus, Qdrant and OpenSearch aggregate metrics are now opt-in. Existing users must add the corresponding profile after the base configuration; the endpoint and identity environment variables remain compatible. vLLM/DCGM remain in the base through Kubernetes discovery.
+
+Bundled paths:
+
+- `/otelcol/collector-config.yaml`
+- `/otelcol/litellm-receiver.yaml`
+- `/otelcol/litellm-receiver-no-auth.yaml`
+- `/otelcol/milvus.yaml`
+- `/otelcol/qdrant.yaml`
+- `/otelcol/opensearch.yaml`
+- `/otelcol/ollama-runtime.yaml`
+- `/otelcol/workload-probes.yaml`
+
+Pass the base first, then one `--config=/otelcol/<profile>.yaml` argument per selected profile. For example:
+
+```sh
+/otelcol/otelcol-custom \
+  --config=/otelcol/collector-config.yaml \
+  --config=/otelcol/milvus.yaml \
+  --config=/otelcol/ollama-runtime.yaml
+```
+
+For LiteLLM, select at most one variant. The authenticated profile reads `LITELLM_METRICS_KEY_FILE`, defaulting to `/etc/litellm-metrics/key`. Mount a readable Secret containing a key accepted by LiteLLM. A missing file fails validation/startup; an unreadable file or incorrect key fails scraping. The public profile sends no Authorization header and needs no key file. Enable LiteLLM's Prometheus callback and set `litellm_settings.require_auth_for_metrics_endpoint` to match the selected profile. Complete Helm examples are included in `examples/helm-litellm-auth.yaml` and `examples/helm-litellm-no-auth.yaml`.
+
+The OpenSearch pod health probe in `workload-probes.yaml` is independent of the aggregate metrics profile. Kubernetes discovery still requires API access and RBAC. Both sides of paired traces must reach the same Collector instance; multiple gateways require trace-aware routing. The upstream Count connector remains alpha.
+
+## Images
+
+The published-release workflow builds `ghcr.io/suse/suse-ai-opentelemetry-collector:0.164.0` for linux/amd64 and linux/arm64. Verify the completed workflow and registry digest before using the image.
+
+Promotion to `registry.suse.com/ai/containers/suse-ai-opentelemetry-collector:0.164.0` is handled separately through image-mirror. This release does not establish that the SUSE Registry image has been promoted.

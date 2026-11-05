@@ -126,6 +126,10 @@ class ProfileIntegration(unittest.TestCase):
                                          ['vllm', 'gpu-metrics'])
                         for name, pipeline in self.base['service']['pipelines'].items():
                             self.assertEqual(merged['service']['pipelines'][name], pipeline)
+                        for product in ('milvus', 'qdrant', 'opensearch'):
+                            hook = merged['processors']['transform/' + product + '_peer']['trace_statements']
+                            self.assertEqual(len(hook), int(product + '.yaml' in profiles),
+                                             'Only the loaded profile may populate its peer hook')
                         for product in ('milvus', 'qdrant'):
                             if product + '.yaml' in profiles:
                                 pipeline = merged['service']['pipelines']['metrics/' + product]

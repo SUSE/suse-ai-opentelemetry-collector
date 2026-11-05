@@ -1,0 +1,50 @@
+SUSE AI OpenTelemetry Collector 0.164.1 — database profile identity
+
+This patch keeps Collector core 0.164.0, contrib 0.164.1 and the existing
+dependency graph/toolchain.
+
+Behavior changes and upgrade instructions
+
+- Milvus and Qdrant now discover ready pod-backed Kubernetes Endpoints behind the
+  configured Service and metrics target port. Each pod has its own UID-based
+  service.instance.id and pod/node/namespace/cluster attributes. Logical service,
+  database and product identity remain available to standard OTel backends.
+- Unset or empty MILVUS_METRICS_ENDPOINT / QDRANT_METRICS_ENDPOINT selects discovery.
+  A nonempty override selects only the static job, preserving external targets.
+  Remove existing local endpoint overrides to get per-pod instances. Grant the
+  Collector get/list/watch access to Services, Endpoints and Pods. This is an
+  explicit mode choice, not an automatic fallback after discovery failure.
+- Static fallbacks and OpenSearch aggregate statistics receive K8S_CLUSTER_NAME
+  for the exact configured local Service endpoint, or after a verified local
+  alias/IP is asserted with the corresponding *_TARGET_IN_CLUSTER=true. External
+  targets do not inherit the Collector's cluster. Aggregate telemetry never gets
+  a fabricated pod UID. Static target instance IDs remain endpoint-based.
+- Loaded database profiles support *_ASSOCIATE_CLIENT_SPANS=true. They associate
+  only CLIENT spans matching the full configured Service DNS name, client port,
+  normalized DB system and Collector cluster. Existing peers and caller resource
+  identity are preserved. Short names, IPs, unknown ports and cross-cluster calls
+  are not resolved. The default is off because endpoint ownership cannot safely
+  be inferred for external targets or custom logical service identities.
+- Milvus client port defaults to 19530 (metrics 9091); Qdrant to 6333 (set 6334
+  for gRPC); OpenSearch to ELASTICSEARCH_PORT (9200). All selectors, namespaces,
+  logical names, ports and opt-ins are configurable through environment variables.
+- Resolved calls use the native database service edge. An old observed database
+  dependency and edge expire 15 minutes after their last unresolved call.
+
+See README.md and knowledge/{milvus,qdrant,opensearch}.md for settings, migration,
+RBAC, verification and same-cluster limitations. The image still bundles the base
+and seven optional profile files; load the base first and at most one LiteLLM
+variant.
+
+Validation
+
+Both linux/amd64 and linux/arm64 images passed 33 Python integration tests each
+and all 96 supported profile combinations (184 ordered validations per
+architecture). Both contain all eight bundled configurations and run as UID 10001.
+Arm64 runtime tests used QEMU. Exporter race tests and configuration lint passed.
+
+Images
+
+The release workflow publishes ghcr.io/suse/suse-ai-opentelemetry-collector:0.164.1
+for linux/amd64 and linux/arm64. SUSE Registry promotion follows the separate
+image-mirror process; check its completion before using the SUSE Registry tag.

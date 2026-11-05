@@ -1,5 +1,6 @@
 # Optional profile: load after /otelcol/collector-config.yaml.
-# Uses its own receiver and pipeline so other scrape jobs are preserved.
+# Unset/empty QDRANT_METRICS_ENDPOINT selects pod discovery; a nonempty value
+# selects only the static fallback. Discovery still requires Kubernetes API RBAC.
 receivers:
   prometheus/qdrant:
     config:
@@ -7,14 +8,101 @@ receivers:
       - job_name: qdrant
         scrape_interval: 10s
         metrics_path: /metrics
+        kubernetes_sd_configs:
+        - role: endpoints
+          namespaces:
+            names: ["${env:QDRANT_NAMESPACE:-${env:SUSE_AI_NAMESPACE:-suse-private-ai}}"]
+        relabel_configs:
+        # An endpoint override disables discovery targets, including local overrides.
+        - target_label: __tmp_static_endpoint
+          replacement: "${env:QDRANT_METRICS_ENDPOINT:-}"
+        - source_labels: [__tmp_static_endpoint]
+          action: drop
+          regex: ".+"
+        - source_labels: [__meta_kubernetes_service_name]
+          action: keep
+          regex: "${env:QDRANT_K8S_SERVICE_NAME:-qdrant}"
+        - source_labels: [__address__]
+          action: keep
+          regex: ".*:${env:QDRANT_METRICS_PORT:-6333}"
+        # Keep only real, ready pod-backed endpoints (not extra container ports).
+        - source_labels: [__meta_kubernetes_endpoint_address_target_kind]
+          action: keep
+          regex: Pod
+        - source_labels: [__meta_kubernetes_endpoint_ready]
+          action: keep
+          regex: "true"
+        - source_labels: [__meta_kubernetes_pod_uid]
+          action: keep
+          regex: ".+"
+        - target_label: service_name
+          replacement: "${env:QDRANT_SERVICE_NAME:-qdrant}"
+        - source_labels: [__meta_kubernetes_namespace]
+          target_label: service_namespace
+        - target_label: db_system
+          replacement: qdrant
+        - target_label: suse_ai_product
+          replacement: qdrant
+        - source_labels: [__meta_kubernetes_pod_uid]
+          target_label: k8s_pod_uid
+        - source_labels: [__meta_kubernetes_pod_name]
+          target_label: k8s_pod_name
+        - source_labels: [__meta_kubernetes_pod_node_name]
+          target_label: k8s_node_name
+        - source_labels: [__meta_kubernetes_namespace]
+          target_label: k8s_namespace_name
+      - job_name: qdrant-static
+        scrape_interval: 10s
+        metrics_path: /metrics
         static_configs:
-        - targets:
-          - ${env:QDRANT_METRICS_ENDPOINT:-qdrant.${env:SUSE_AI_NAMESPACE:-suse-private-ai}.svc.cluster.local:6333}
+        - targets: ["${env:QDRANT_METRICS_ENDPOINT:-${env:QDRANT_K8S_SERVICE_NAME:-qdrant}.${env:QDRANT_NAMESPACE:-${env:SUSE_AI_NAMESPACE:-suse-private-ai}}.svc.${env:K8S_CLUSTER_DOMAIN:-cluster.local}:${env:QDRANT_METRICS_PORT:-6333}}"]
           labels:
-            service_name: qdrant
-            service_namespace: ${env:SUSE_AI_NAMESPACE:-suse-private-ai}
+            service_name: "${env:QDRANT_SERVICE_NAME:-qdrant}"
+            service_namespace: "${env:QDRANT_NAMESPACE:-${env:SUSE_AI_NAMESPACE:-suse-private-ai}}"
             db_system: qdrant
             suse_ai_product: qdrant
+        relabel_configs:
+        # The default address is a valid placeholder; it is never scraped.
+        - target_label: __tmp_static_endpoint
+          replacement: "${env:QDRANT_METRICS_ENDPOINT:-}"
+        - source_labels: [__tmp_static_endpoint]
+          action: keep
+          regex: ".+"
+
+processors:
+  transform/qdrant_scope:
+    error_mode: propagate
+    metric_statements:
+    - context: resource
+      conditions:
+      - >-
+        "${env:K8S_CLUSTER_NAME:-}" != "" and ("${env:QDRANT_TARGET_IN_CLUSTER:-false}" == "true" or "${env:QDRANT_METRICS_ENDPOINT:-}" == "${env:QDRANT_K8S_SERVICE_NAME:-qdrant}.${env:QDRANT_NAMESPACE:-${env:SUSE_AI_NAMESPACE:-suse-private-ai}}.svc.${env:K8S_CLUSTER_DOMAIN:-cluster.local}:${env:QDRANT_METRICS_PORT:-6333}")
+      statements:
+      - set(resource.attributes["k8s.cluster.name"], "${env:K8S_CLUSTER_NAME:-}") where resource.attributes["k8s.cluster.name"] == nil or resource.attributes["k8s.cluster.name"] == ""
+      - set(resource.attributes["k8s.namespace.name"], "${env:QDRANT_NAMESPACE:-${env:SUSE_AI_NAMESPACE:-suse-private-ai}}") where resource.attributes["k8s.namespace.name"] == nil or resource.attributes["k8s.namespace.name"] == ""
+
+  # Opt-in ownership assertion; match only this Service's full DNS name and port.
+  transform/qdrant_peer:
+    error_mode: ignore
+    trace_statements:
+    - context: span
+      conditions:
+      - >-
+        "${env:QDRANT_ASSOCIATE_CLIENT_SPANS:-false}" == "true" and
+        "${env:K8S_CLUSTER_NAME:-}" != "" and
+        span.kind == SPAN_KIND_CLIENT and
+        resource.attributes["k8s.cluster.name"] == "${env:K8S_CLUSTER_NAME:-}" and
+        span.attributes["db.system.name"] == "qdrant" and
+        span.attributes["server.address"] == "${env:QDRANT_K8S_SERVICE_NAME:-qdrant}.${env:QDRANT_NAMESPACE:-${env:SUSE_AI_NAMESPACE:-suse-private-ai}}.svc.${env:K8S_CLUSTER_DOMAIN:-cluster.local}" and
+        String(span.attributes["server.port"]) == "${env:QDRANT_CLIENT_PORT:-6333}" and
+        ("${env:QDRANT_METRICS_ENDPOINT:-}" == "" or "${env:QDRANT_TARGET_IN_CLUSTER:-false}" == "true" or "${env:QDRANT_METRICS_ENDPOINT:-}" == "${env:QDRANT_K8S_SERVICE_NAME:-qdrant}.${env:QDRANT_NAMESPACE:-${env:SUSE_AI_NAMESPACE:-suse-private-ai}}.svc.${env:K8S_CLUSTER_DOMAIN:-cluster.local}:${env:QDRANT_METRICS_PORT:-6333}") and
+        (span.attributes["suse.ai.peer.service.name"] == nil or span.attributes["suse.ai.peer.service.name"] == "") and
+        (span.attributes["suse.ai.peer.service.namespace"] == nil or span.attributes["suse.ai.peer.service.namespace"] == "") and
+        (span.attributes["suse.ai.peer.cluster"] == nil or span.attributes["suse.ai.peer.cluster"] == "")
+      statements:
+      - set(span.attributes["suse.ai.peer.service.name"], "${env:QDRANT_SERVICE_NAME:-qdrant}")
+      - set(span.attributes["suse.ai.peer.service.namespace"], "${env:QDRANT_NAMESPACE:-${env:SUSE_AI_NAMESPACE:-suse-private-ai}}")
+      - set(span.attributes["suse.ai.peer.cluster"], "${env:K8S_CLUSTER_NAME:-}")
 
 service:
   pipelines:
@@ -25,6 +113,7 @@ service:
       - memory_limiter
       - transform/prometheus
       - transform/kubernetes_identity
+      - transform/qdrant_scope
       - resource
       - transform/suse_ai_resource
       - transform/genai-normalize

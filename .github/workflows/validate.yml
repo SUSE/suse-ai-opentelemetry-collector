@@ -66,4 +66,5 @@ jobs:
         run: |
           python3 tests/test_collector.py --collector "$RUNNER_TEMP/otelcol-custom"
           python3 tests/test_profiles.py --collector "$RUNNER_TEMP/otelcol-custom"
+          python3 tests/test_database_profiles.py --collector "$RUNNER_TEMP/otelcol-custom"
           python3 tests/test_workload_collection.py --collector "$RUNNER_TEMP/otelcol-custom"

@@ -71,3 +71,13 @@ Verified on 2026-09-09 on `fix/collector-v0.160.0-release`, based on `5051b29781
 ### Publication authorized — 2026-11-05
 
 - After reviewing the 0.164.1 diffs, validation, live evidence and publication boundary, the user confirmed: “Do it.” Push, tag and release are authorized for this candidate. Refreshed origin/main remains `c9dae09`; v0.164.1 is unused. All bundled profiles still match the validated amd64/arm64 candidate. Publication follows repository review/check requirements and the existing release workflow.
+
+
+### Collector 0.164.1 published and deployed — 2026-11-05
+
+- PR #41 merged after Collector validation and both CodeQL checks passed. Release v0.164.1 points to merge commit `cdb9ed07bdb8ef1250a07dbf99ce34c845750fd0`; its tree equals the tested candidate. The release image workflow completed successfully for amd64, arm64 and manifest publication.
+- The published GHCR index is `sha256:7bb0b0a6128fdc2659c72acf7b26c9acac56b51685610806ef3b8683cb2c7744`. Both downloaded executables and all eight bundled YAML files are byte-identical to the candidate that passed 66 packaged Python tests and all supported profile combinations. Both images use UID 10001 and report version 0.164.1/Go 1.26.10.
+- The demo now runs that GHCR image pinned by digest and uses bundled profiles, with the candidate volume removed. At 18:17:13 UTC, the Collector was Ready with zero restarts, fresh 0.164.1 Milvus scrapes had up=1 and cluster suse-ai, and the service instance matched pod UID `63009ba2-99ab-4481-9cb4-24eee6c0ab36`. A fresh CLIENT span joins RAG to native Milvus; the old observed dependency remains absent.
+- Repeated `sts topology-sync list` and `describe` show both streams Running with unchanged historical counts (79/34) and 10 active error details each. No globally clean-backend claim is made. Both saved rollback patches passed server dry-run validation.
+- SUSE image-mirror MR !498 adds exactly one mapping for 0.164.1 and retains all existing tags/paths. SUSE Registry promotion remains pending its normal staging and production pipeline. The monitoring guide's SUSE publication marker remains pending; existing guide drafts are preserved.
+- Publication, immutable image inspection, live evidence and rollback details are recorded in [the publication report](publication-0.164.1-2026-11-05.md) and `/home/thbertoldi/suse/qa/collector-0.164.1-publication-20261105-Yummc1`.

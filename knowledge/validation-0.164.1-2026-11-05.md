@@ -1,5 +1,7 @@
 # Collector 0.164.1 database identity verification
 
+The release is now published; see the [publication and released-image live check](publication-0.164.1-2026-11-05.md). This document retains the preparation evidence.
+
 Prepared on `fix/database-identity-0.164.1` from `c9dae09` (main/v0.164.0).
 This report records the completed preparation and validation before publication.
 The user subsequently authorized pushing and releasing 0.164.1. Pre-existing

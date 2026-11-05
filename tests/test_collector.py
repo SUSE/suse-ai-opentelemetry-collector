@@ -132,9 +132,14 @@ class CollectorIntegration(IdentityCases, unittest.TestCase):
                 for group in job["static_configs"]:
                     group["targets"] = targets[:1]
         for product in ("milvus", "qdrant"):
-            job = config["receivers"]["prometheus/" + product]["config"]["scrape_configs"][0]
-            job["scrape_interval"], job["scrape_timeout"] = "1s", "1s"
-            job["static_configs"][0]["targets"] = targets[:1]
+            # This suite covers external static overrides. The database-profile
+            # suite exercises the unchanged Kubernetes discovery against an API.
+            cls.env[product.upper() + "_METRICS_ENDPOINT"] = targets[0]
+            for job in config["receivers"]["prometheus/" + product]["config"]["scrape_configs"]:
+                job["scrape_interval"], job["scrape_timeout"] = "1s", "1s"
+                if "kubernetes_sd_configs" in job:
+                    job.pop("kubernetes_sd_configs")
+                    job["static_configs"] = []
         for suffix, namespace in (("missing", None), ("empty", ""), ("valid", "tenant-scrape")):
             labels = {"suse_ai_product": "vllm", "gen_ai_system": "vllm"}
             if namespace is not None:
@@ -452,6 +457,10 @@ class CollectorIntegration(IdentityCases, unittest.TestCase):
         self.assertEqual(values["db.system.name"], "opensearch")
         self.assertEqual(values['suse.ai.product'], 'opensearch')
         self.assertEqual(values["elasticsearch.node.name"], "node-a")
+        self.assertEqual(values["k8s.cluster.name"], "test-cluster")
+        self.assertEqual(values["k8s.namespace.name"], "ai-test")
+        self.assertNotIn("k8s.pod.uid", values)
+        self.assertNotIn("service.instance.id", values)
 
     def test_relationship_observations_and_span_metric_units(self):
         now = time.time_ns()

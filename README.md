@@ -82,7 +82,9 @@ go build -mod=readonly -o otelcol-custom .
 ./otelcol-custom --version
 ```
 
-The distribution version is `0.164.0`, matching the upstream collector release. It is set in `builder-config.yaml` and embedded in the generated executable. The update script keeps it aligned with the selected release tag.
+The distribution version is `0.164.1`, a profile fix using Collector core 0.164.0
+and contrib 0.164.1. It is set in `builder-config.yaml` and embedded in the
+generated executable. Upstream dependency versions have not changed.
 
 To regenerate it from the manifest, install `go.opentelemetry.io/collector/cmd/builder@v0.164.0` and run `builder --config builder-config.yaml` from the repository root.
 
@@ -95,6 +97,8 @@ bash scripts/update-collector.sh v0.164.0
 ```
 
 Omit the tag to select the latest stable release. If the new release needs a newer Go version than the Containerfile provides, the update fails with a message to update the build image before publishing.
+The updater also resets the distribution version to the selected upstream tag.
+For the 0.164.1 profile patch, regenerate from the checked-in manifest instead.
 
 ### Container image
 
@@ -249,9 +253,35 @@ command:
 
 | Bundled profile | Environment variables and defaults |
 | --- | --- |
-| `/otelcol/milvus.yaml` | `MILVUS_METRICS_ENDPOINT=milvus.<SUSE_AI_NAMESPACE>.svc.cluster.local:9091`; `SUSE_AI_NAMESPACE=suse-private-ai` |
-| `/otelcol/qdrant.yaml` | `QDRANT_METRICS_ENDPOINT=qdrant.<SUSE_AI_NAMESPACE>.svc.cluster.local:6333`; `SUSE_AI_NAMESPACE=suse-private-ai` |
-| `/otelcol/opensearch.yaml` | `ELASTICSEARCH_ENDPOINT=http://opensearch-cluster-master-headless.<SUSE_AI_NAMESPACE>.svc.cluster.local:9200`; `ELASTICSEARCH_USERNAME=admin`; `ELASTICSEARCH_PASSWORD` required for secured clusters; `ELASTICSEARCH_SERVICE_NAME=opensearch`; `ELASTICSEARCH_SYSTEM=opensearch`; `SUSE_AI_NAMESPACE=suse-private-ai` |
+| `/otelcol/milvus.yaml` | `MILVUS_K8S_SERVICE_NAME=milvus`; `MILVUS_SERVICE_NAME=milvus`; `MILVUS_METRICS_PORT=9091`; `MILVUS_NAMESPACE=<SUSE_AI_NAMESPACE>` |
+| `/otelcol/qdrant.yaml` | `QDRANT_K8S_SERVICE_NAME=qdrant`; `QDRANT_SERVICE_NAME=qdrant`; `QDRANT_METRICS_PORT=6333`; `QDRANT_NAMESPACE=<SUSE_AI_NAMESPACE>` |
+| `/otelcol/opensearch.yaml` | `ELASTICSEARCH_K8S_SERVICE_NAME=opensearch-cluster-master-headless`; `ELASTICSEARCH_NAMESPACE=<SUSE_AI_NAMESPACE>`; `ELASTICSEARCH_PORT=9200`; `ELASTICSEARCH_ENDPOINT=http://<Service>.<namespace>.svc.<K8S_CLUSTER_DOMAIN>:<port>`; `ELASTICSEARCH_USERNAME=admin`; `ELASTICSEARCH_PASSWORD` required for secured clusters; `ELASTICSEARCH_SERVICE_NAME=opensearch`; `ELASTICSEARCH_SYSTEM=opensearch` |
+
+In 0.164.1, Milvus and Qdrant discover ready pod-backed Kubernetes Endpoints for
+the configured Service, namespace and metrics target port. Each resource carries
+`service.instance.id=k8s.pod.uid`, pod name, node, namespace and cluster.
+Logical service names, namespace, DB system and product labels are retained.
+`SUSE_AI_NAMESPACE` defaults to `suse-private-ai`; set `K8S_CLUSTER_NAME` to the
+Collector's actual cluster. Discovery needs get/list/watch permissions on
+Services, Endpoints and Pods; the Helm examples include these rules.
+
+**Static fallback:** a nonempty `MILVUS_METRICS_ENDPOINT` or
+`QDRANT_METRICS_ENDPOINT` selects only the corresponding static job, disabling
+that product's discovered targets. This keeps external `host:port` overrides
+working. Unset or empty means discovery; it does not mean retrying a failed
+Service scrape. Remove existing local endpoint overrides when upgrading to get
+per-pod instances. Static jobs keep their endpoint instance ID, without pod or
+node identity. The base configuration still requires Kubernetes API access.
+
+**Cluster scope:** OpenSearch aggregate metrics and static fallbacks receive
+`k8s.cluster.name` only when their endpoint exactly matches the configured
+Service FQDN and port in the Collector's cluster, or you explicitly set
+`MILVUS_TARGET_IN_CLUSTER=true`, `QDRANT_TARGET_IN_CLUSTER=true` or
+`ELASTICSEARCH_TARGET_IN_CLUSTER=true` after verifying a local alias/IP.
+These flags default to false. External endpoints receive no local cluster.
+Local aggregate resources also get `k8s.namespace.name`, never a pod UID.
+Existing cluster attributes are preserved. `K8S_CLUSTER_DOMAIN` defaults to
+`cluster.local`; the cluster name must be nonempty for aggregate enrichment.
 
 Milvus/Qdrant targets are `host:port` (no URL scheme). The OpenSearch endpoint is
 a URL; use HTTPS for secured clusters. Existing `ELASTICSEARCH_*` names remain
@@ -287,10 +317,70 @@ Run the composition and no-products regression checks with:
 
 ```bash
 python3 tests/test_profiles.py --collector /path/to/otelcol-custom
+python3 tests/test_database_profiles.py --collector /path/to/otelcol-custom
 python3 tests/test_litellm_auth.py --collector /path/to/otelcol-custom
 ```
 
-The second command requires Docker and pull access to the pinned SUSE LiteLLM
+The last command requires Docker and pull access to the pinned SUSE LiteLLM
 1.81.13 image. It starts real proxies with authentication on/off, checks rejected
 anonymous/wrong-key requests, and verifies exported metrics with/without a key
 file. It removes its test containers when finished.
+
+## Associate database client spans with the native service
+
+Load the database profile and set its `*_ASSOCIATE_CLIENT_SPANS=true` variable
+after verifying that its Kubernetes Service serves that database in this cluster.
+The default is false: profiles also support external targets, custom logical
+identities and client traffic forwarded from other clusters. Enabling a guessed
+association could join unrelated services. No bundled file edits are required.
+
+| Profile | Opt-in variable | Exact client port |
+| --- | --- | --- |
+| Milvus | `MILVUS_ASSOCIATE_CLIENT_SPANS` | `MILVUS_CLIENT_PORT=19530` (not metrics port 9091) |
+| Qdrant | `QDRANT_ASSOCIATE_CLIENT_SPANS` | `QDRANT_CLIENT_PORT=6333`; set 6334 for gRPC |
+| OpenSearch/Elasticsearch | `ELASTICSEARCH_ASSOCIATE_CLIENT_SPANS` | `ELASTICSEARCH_CLIENT_PORT=<ELASTICSEARCH_PORT>` |
+
+For example, with `milvus.yaml` loaded, append these Helm environment entries
+to your complete `extraEnvs` list and remove `MILVUS_METRICS_ENDPOINT`:
+
+```yaml
+extraEnvs:
+  - name: K8S_CLUSTER_NAME
+    value: suse-ai
+  - name: MILVUS_NAMESPACE
+    value: suse-private-ai
+  - name: MILVUS_K8S_SERVICE_NAME
+    value: milvus
+  - name: MILVUS_SERVICE_NAME
+    value: milvus
+  - name: MILVUS_ASSOCIATE_CLIENT_SPANS
+    value: "true"
+  - name: MILVUS_CLIENT_PORT
+    value: "19530"
+```
+
+Only CLIENT spans with the matching normalized DB system, exact
+`<K8S_SERVICE_NAME>.<NAMESPACE>.svc.<K8S_CLUSTER_DOMAIN>`, exact port (integer
+or decimal string) and resource cluster equal to `K8S_CLUSTER_NAME` receive
+`suse.ai.peer.service.name`, `suse.ai.peer.service.namespace` and
+`suse.ai.peer.cluster`. All three peer fields must initially be missing or
+empty. Legacy endpoint attributes are normalized first. Existing peers and
+caller resource identity are preserved.
+
+Short names, IPs, other domains, unknown/wrong ports and other/unknown caller
+clusters are not resolved.
+Matching happens before the base pipeline's local cluster fallback, so a caller
+with a pod UID but no reported cluster remains unresolved.
+External endpoints remain excluded unless explicitly asserted local. The profile
+must be loaded; enabling an environment flag alone has no effect.
+No DNS lookup or topology lookup is used.
+The peer name/namespace are the same as the metrics' native service identity.
+For Elasticsearch use `ELASTICSEARCH_SYSTEM=elasticsearch` and the appropriate
+logical service name.
+
+Resolved calls refresh the native service edge. An old observed database
+dependency and its edge expire 15 minutes after the last unresolved call.
+Verify the Cluster column, pod UID instances and the caller-to-native-service
+edge after generating database traffic. Native service identifiers still omit
+cluster, so identical logical service names/namespaces across clusters retain
+the companion StackPack's existing limitation.

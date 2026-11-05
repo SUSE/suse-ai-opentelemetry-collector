@@ -1,7 +1,7 @@
 # Optional OpenSearch / Elasticsearch aggregate metrics; load after the base.
 receivers:
   elasticsearch:
-    endpoint: ${env:ELASTICSEARCH_ENDPOINT:-http://opensearch-cluster-master-headless.${env:SUSE_AI_NAMESPACE:-suse-private-ai}.svc.cluster.local:9200}
+    endpoint: ${env:ELASTICSEARCH_ENDPOINT:-http://${env:ELASTICSEARCH_K8S_SERVICE_NAME:-opensearch-cluster-master-headless}.${env:ELASTICSEARCH_NAMESPACE:-${env:SUSE_AI_NAMESPACE:-suse-private-ai}}.svc.${env:K8S_CLUSTER_DOMAIN:-cluster.local}:${env:ELASTICSEARCH_PORT:-9200}}
     username: ${env:ELASTICSEARCH_USERNAME:-admin}
     password: ${env:ELASTICSEARCH_PASSWORD}
     tls:
@@ -14,13 +14,50 @@ receivers:
         enabled: true
 
 processors:
+  transform/elasticsearch_scope:
+    error_mode: propagate
+    metric_statements:
+    - context: resource
+      conditions:
+      - >-
+        "${env:K8S_CLUSTER_NAME:-}" != "" and ("${env:ELASTICSEARCH_TARGET_IN_CLUSTER:-false}" == "true" or
+        "${env:ELASTICSEARCH_ENDPOINT:-http://${env:ELASTICSEARCH_K8S_SERVICE_NAME:-opensearch-cluster-master-headless}.${env:ELASTICSEARCH_NAMESPACE:-${env:SUSE_AI_NAMESPACE:-suse-private-ai}}.svc.${env:K8S_CLUSTER_DOMAIN:-cluster.local}:${env:ELASTICSEARCH_PORT:-9200}}" == "http://${env:ELASTICSEARCH_K8S_SERVICE_NAME:-opensearch-cluster-master-headless}.${env:ELASTICSEARCH_NAMESPACE:-${env:SUSE_AI_NAMESPACE:-suse-private-ai}}.svc.${env:K8S_CLUSTER_DOMAIN:-cluster.local}:${env:ELASTICSEARCH_PORT:-9200}" or
+        "${env:ELASTICSEARCH_ENDPOINT:-http://${env:ELASTICSEARCH_K8S_SERVICE_NAME:-opensearch-cluster-master-headless}.${env:ELASTICSEARCH_NAMESPACE:-${env:SUSE_AI_NAMESPACE:-suse-private-ai}}.svc.${env:K8S_CLUSTER_DOMAIN:-cluster.local}:${env:ELASTICSEARCH_PORT:-9200}}" == "https://${env:ELASTICSEARCH_K8S_SERVICE_NAME:-opensearch-cluster-master-headless}.${env:ELASTICSEARCH_NAMESPACE:-${env:SUSE_AI_NAMESPACE:-suse-private-ai}}.svc.${env:K8S_CLUSTER_DOMAIN:-cluster.local}:${env:ELASTICSEARCH_PORT:-9200}")
+      statements:
+      - set(resource.attributes["k8s.cluster.name"], "${env:K8S_CLUSTER_NAME:-}") where resource.attributes["k8s.cluster.name"] == nil or resource.attributes["k8s.cluster.name"] == ""
+      - set(resource.attributes["k8s.namespace.name"], "${env:ELASTICSEARCH_NAMESPACE:-${env:SUSE_AI_NAMESPACE:-suse-private-ai}}") where resource.attributes["k8s.namespace.name"] == nil or resource.attributes["k8s.namespace.name"] == ""
+
+  transform/opensearch_peer:
+    error_mode: ignore
+    trace_statements:
+    - context: span
+      conditions:
+      - >-
+        "${env:ELASTICSEARCH_ASSOCIATE_CLIENT_SPANS:-false}" == "true" and
+        "${env:K8S_CLUSTER_NAME:-}" != "" and
+        span.kind == SPAN_KIND_CLIENT and
+        resource.attributes["k8s.cluster.name"] == "${env:K8S_CLUSTER_NAME:-}" and
+        span.attributes["db.system.name"] == "${env:ELASTICSEARCH_SYSTEM:-opensearch}" and
+        span.attributes["server.address"] == "${env:ELASTICSEARCH_K8S_SERVICE_NAME:-opensearch-cluster-master-headless}.${env:ELASTICSEARCH_NAMESPACE:-${env:SUSE_AI_NAMESPACE:-suse-private-ai}}.svc.${env:K8S_CLUSTER_DOMAIN:-cluster.local}" and
+        String(span.attributes["server.port"]) == "${env:ELASTICSEARCH_CLIENT_PORT:-${env:ELASTICSEARCH_PORT:-9200}}" and
+        ("${env:ELASTICSEARCH_TARGET_IN_CLUSTER:-false}" == "true" or
+        "${env:ELASTICSEARCH_ENDPOINT:-http://${env:ELASTICSEARCH_K8S_SERVICE_NAME:-opensearch-cluster-master-headless}.${env:ELASTICSEARCH_NAMESPACE:-${env:SUSE_AI_NAMESPACE:-suse-private-ai}}.svc.${env:K8S_CLUSTER_DOMAIN:-cluster.local}:${env:ELASTICSEARCH_PORT:-9200}}" == "http://${env:ELASTICSEARCH_K8S_SERVICE_NAME:-opensearch-cluster-master-headless}.${env:ELASTICSEARCH_NAMESPACE:-${env:SUSE_AI_NAMESPACE:-suse-private-ai}}.svc.${env:K8S_CLUSTER_DOMAIN:-cluster.local}:${env:ELASTICSEARCH_PORT:-9200}" or
+        "${env:ELASTICSEARCH_ENDPOINT:-http://${env:ELASTICSEARCH_K8S_SERVICE_NAME:-opensearch-cluster-master-headless}.${env:ELASTICSEARCH_NAMESPACE:-${env:SUSE_AI_NAMESPACE:-suse-private-ai}}.svc.${env:K8S_CLUSTER_DOMAIN:-cluster.local}:${env:ELASTICSEARCH_PORT:-9200}}" == "https://${env:ELASTICSEARCH_K8S_SERVICE_NAME:-opensearch-cluster-master-headless}.${env:ELASTICSEARCH_NAMESPACE:-${env:SUSE_AI_NAMESPACE:-suse-private-ai}}.svc.${env:K8S_CLUSTER_DOMAIN:-cluster.local}:${env:ELASTICSEARCH_PORT:-9200}") and
+        (span.attributes["suse.ai.peer.service.name"] == nil or span.attributes["suse.ai.peer.service.name"] == "") and
+        (span.attributes["suse.ai.peer.service.namespace"] == nil or span.attributes["suse.ai.peer.service.namespace"] == "") and
+        (span.attributes["suse.ai.peer.cluster"] == nil or span.attributes["suse.ai.peer.cluster"] == "")
+      statements:
+      - set(span.attributes["suse.ai.peer.service.name"], "${env:ELASTICSEARCH_SERVICE_NAME:-opensearch}")
+      - set(span.attributes["suse.ai.peer.service.namespace"], "${env:ELASTICSEARCH_NAMESPACE:-${env:SUSE_AI_NAMESPACE:-suse-private-ai}}")
+      - set(span.attributes["suse.ai.peer.cluster"], "${env:K8S_CLUSTER_NAME:-}")
+
   resource/elasticsearch:
     attributes:
     - key: service.name
       value: ${env:ELASTICSEARCH_SERVICE_NAME:-opensearch}
       action: insert
     - key: service.namespace
-      value: ${env:SUSE_AI_NAMESPACE:-suse-private-ai}
+      value: ${env:ELASTICSEARCH_NAMESPACE:-${env:SUSE_AI_NAMESPACE:-suse-private-ai}}
       action: insert
     - key: db.system.name
       value: ${env:ELASTICSEARCH_SYSTEM:-opensearch}
@@ -37,6 +74,7 @@ service:
       processors:
       - memory_limiter
       - resource/elasticsearch
+      - transform/elasticsearch_scope
       - resource
       - transform/suse_ai_resource
       - transform/genai-normalize

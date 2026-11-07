@@ -6,7 +6,7 @@ COPY ./builder-config.yaml builder-config.yaml
 COPY ./topologyexporter ./topologyexporter
 
 RUN --mount=type=cache,target=/root/.cache/go-build \
-    GO111MODULE=on go install go.opentelemetry.io/collector/cmd/builder@v0.164.0
+    GO111MODULE=on go install go.opentelemetry.io/collector/cmd/builder@v0.165.0
 
 # Keep reviewed dependency fixes from go.mod/go.sum when generating the distribution.
 COPY ./suse-ai-opentelemetry-collector/go.mod ./suse-ai-opentelemetry-collector/go.sum ./suse-ai-opentelemetry-collector/

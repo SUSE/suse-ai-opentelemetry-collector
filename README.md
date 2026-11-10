@@ -82,23 +82,22 @@ go build -mod=readonly -o otelcol-custom .
 ./otelcol-custom --version
 ```
 
-The distribution version is `0.164.1`, a profile fix using Collector core 0.164.0
-and contrib 0.164.1. It is set in `builder-config.yaml` and embedded in the
-generated executable. Upstream dependency versions have not changed.
+The distribution version is `0.165.0`, using the upstream 0.165.0 Kubernetes
+distribution and Elasticsearch receiver. It is set in `builder-config.yaml`
+and embedded in the generated executable.
 
-To regenerate it from the manifest, install `go.opentelemetry.io/collector/cmd/builder@v0.164.0` and run `builder --config builder-config.yaml` from the repository root.
+To regenerate it from the manifest, install `go.opentelemetry.io/collector/cmd/builder@v0.165.0` and run `builder --config builder-config.yaml` from the repository root.
 
 ### Updating components
 
 The script [`scripts/update-collector.sh`](scripts/update-collector.sh) downloads the official K8s and contrib manifests from the selected release tag, merges in the Elasticsearch receiver and local Topology exporter, then regenerates, builds, and validates the distribution. It requires Go, curl, jq, and Mike Farah's yq v4.
 
 ```bash
-bash scripts/update-collector.sh v0.164.0
+bash scripts/update-collector.sh v0.165.0
 ```
 
 Omit the tag to select the latest stable release. If the new release needs a newer Go version than the Containerfile provides, the update fails with a message to update the build image before publishing.
 The updater also resets the distribution version to the selected upstream tag.
-For the 0.164.1 profile patch, regenerate from the checked-in manifest instead.
 
 ### Container image
 
@@ -235,6 +234,17 @@ set `configMap.create: false` and pass the bundled base first through
 Secret's `0440` mode and pod group `10001` allow the image's non-root user to read
 it. Set the real cluster/namespace and the existing backend API-key Secret.
 
+## Kubeflow and KServe metrics
+
+Add `--config=/otelcol/kubeflow.yaml` after the base configuration to scrape
+Pipelines, Workflow Controller, KServe Controller and model pods. It retains
+the demo selectors and per-pod resource identity. Controller scrapes use the
+projected ServiceAccount token and require `GET /metrics` RBAC. The default
+HTTPS settings accept the demo's self-signed certificates; configure a CA and
+`KUBEFLOW_METRICS_INSECURE_SKIP_VERIFY=false` for verified TLS. See
+[the Kubeflow profile guide](knowledge/kubeflow.md) for all settings, ports,
+RBAC and migration from a ConfigMap overlay.
+
 ## Optional product inputs
 
 The image bundles these independent profiles beside the base config. Add one
@@ -256,6 +266,7 @@ command:
 | `/otelcol/milvus.yaml` | `MILVUS_K8S_SERVICE_NAME=milvus`; `MILVUS_SERVICE_NAME=milvus`; `MILVUS_METRICS_PORT=9091`; `MILVUS_NAMESPACE=<SUSE_AI_NAMESPACE>` |
 | `/otelcol/qdrant.yaml` | `QDRANT_K8S_SERVICE_NAME=qdrant`; `QDRANT_SERVICE_NAME=qdrant`; `QDRANT_METRICS_PORT=6333`; `QDRANT_NAMESPACE=<SUSE_AI_NAMESPACE>` |
 | `/otelcol/opensearch.yaml` | `ELASTICSEARCH_K8S_SERVICE_NAME=opensearch-cluster-master-headless`; `ELASTICSEARCH_NAMESPACE=<SUSE_AI_NAMESPACE>`; `ELASTICSEARCH_PORT=9200`; `ELASTICSEARCH_ENDPOINT=http://<Service>.<namespace>.svc.<K8S_CLUSTER_DOMAIN>:<port>`; `ELASTICSEARCH_USERNAME=admin`; `ELASTICSEARCH_PASSWORD` required for secured clusters; `ELASTICSEARCH_SERVICE_NAME=opensearch`; `ELASTICSEARCH_SYSTEM=opensearch` |
+| `/otelcol/kubeflow.yaml` | `KUBEFLOW_NAMESPACE=kubeflow`; `KSERVE_NAMESPACE=kubeflow-user-example-com`; projected ServiceAccount token for protected controller scrapes |
 
 In 0.164.1, Milvus and Qdrant discover ready pod-backed Kubernetes Endpoints for
 the configured Service, namespace and metrics target port. Each resource carries
@@ -301,11 +312,11 @@ extraEnvs:
 ```
 
 Each profile defines a separate receiver and pipeline (`metrics/milvus`,
-`metrics/qdrant`, `metrics/elasticsearch`). They do not overwrite the base
-Prometheus scrape list or any `service.extensions` list. Load the base first;
+`metrics/qdrant`, `metrics/elasticsearch`, `metrics/kubeflow`). They do not
+overwrite the base Prometheus scrape list or any `service.extensions` list. Load the base first;
 optional profile order then does not matter. The workload profile owns the
-combined extension list and retains `health_check`. All 96 supported subsets
-(base plus any of the five product/workload profiles, and none/one LiteLLM mode)
+combined extension list and retains `health_check`. All 192 supported subsets
+(base plus any of the six product/workload profiles, and none/one LiteLLM mode)
 are validated with the Collector, including reversed profile order. The
 `workload-probes.yaml` OpenSearch **pod health probe** is independent of the
 `opensearch.yaml` aggregate metrics input; omit workload probes too if unwanted.
@@ -318,6 +329,7 @@ Run the composition and no-products regression checks with:
 ```bash
 python3 tests/test_profiles.py --collector /path/to/otelcol-custom
 python3 tests/test_database_profiles.py --collector /path/to/otelcol-custom
+python3 tests/test_kubeflow.py --collector /path/to/otelcol-custom
 python3 tests/test_litellm_auth.py --collector /path/to/otelcol-custom
 ```
 

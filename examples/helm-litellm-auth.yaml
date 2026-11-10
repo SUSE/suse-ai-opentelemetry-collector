@@ -2,8 +2,8 @@
 # The image tag is the release target; use it after SUSE registry publication.
 mode: deployment
 image:
-  repository: registry.suse.com/ai/containers/suse-ai-opentelemetry-collector
-  tag: "0.164.1"
+  repository: registry.suse.com/ai/containers/suse/suse-ai-opentelemetry-collector
+  tag: "0.165.0"
 configMap:
   create: false
   existingName: ""
@@ -16,6 +16,8 @@ command:
     # - --config=/otelcol/milvus.yaml
     # - --config=/otelcol/qdrant.yaml
     # - --config=/otelcol/opensearch.yaml
+    # Kubeflow also needs GET /metrics RBAC; see knowledge/kubeflow.md.
+    # - --config=/otelcol/kubeflow.yaml
     # - --config=/otelcol/ollama-runtime.yaml
     # - --config=/otelcol/workload-probes.yaml
 podSecurityContext:

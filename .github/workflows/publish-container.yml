@@ -12,6 +12,7 @@ on:
       - 'milvus.yaml'
       - 'qdrant.yaml'
       - 'opensearch.yaml'
+      - 'kubeflow.yaml'
       - 'examples/ollama-runtime.yaml'
       - 'examples/workload-probes.yaml'
       - 'tests/fixtures/litellm-metrics-key'

@@ -20,7 +20,7 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 OPTIONS = None
-PROFILES = ('milvus.yaml', 'qdrant.yaml', 'opensearch.yaml',
+PROFILES = ('milvus.yaml', 'qdrant.yaml', 'opensearch.yaml', 'kubeflow.yaml',
             'examples/ollama-runtime.yaml', 'examples/workload-probes.yaml')
 LITELLM_MODES = (None, 'litellm-receiver.yaml', 'litellm-receiver-no-auth.yaml')
 
@@ -82,6 +82,7 @@ class ProfileIntegration(unittest.TestCase):
         cls.env = dict(os.environ, API_KEY='test-key', ELASTICSEARCH_PASSWORD='test-password',
                        K8S_CLUSTER_NAME='test-cluster', SUSE_AI_NAMESPACE='ai-test',
                        GPU_NAMESPACE='gpu-test', OTEL_RESOURCE_ATTRIBUTES='',
+                       KUBEFLOW_METRICS_TOKEN_FILE=str(ROOT / 'tests/fixtures/litellm-metrics-key'),
                        LITELLM_METRICS_KEY_FILE=str(ROOT / 'tests/fixtures/litellm-metrics-key'))
         cls.base = yaml.safe_load((ROOT / 'collector-config.yaml').read_text())
 
@@ -91,6 +92,7 @@ class ProfileIntegration(unittest.TestCase):
 
     def test_all_supported_combinations(self):
         count = 0
+        ordered_count = 0
         with (self.directory / 'profile-validation.log').open('w') as output:
             for mode, flags in itertools.product(LITELLM_MODES, itertools.product((False, True), repeat=len(PROFILES))):
                 profiles = [p for p, enabled in zip(PROFILES, flags) if enabled]
@@ -126,6 +128,10 @@ class ProfileIntegration(unittest.TestCase):
                                          ['vllm', 'gpu-metrics'])
                         for name, pipeline in self.base['service']['pipelines'].items():
                             self.assertEqual(merged['service']['pipelines'][name], pipeline)
+                        for profile in profiles:
+                            extra = yaml.safe_load((ROOT / profile).read_text())
+                            for name, pipeline in extra['service']['pipelines'].items():
+                                self.assertEqual(merged['service']['pipelines'][name], pipeline)
                         for product in ('milvus', 'qdrant', 'opensearch'):
                             hook = merged['processors']['transform/' + product + '_peer']['trace_statements']
                             self.assertEqual(len(hook), int(product + '.yaml' in profiles),
@@ -142,9 +148,12 @@ class ProfileIntegration(unittest.TestCase):
                                 self.assertEqual(auth['type'], 'Bearer')
                             else:
                                 self.assertIsNone(auth)
+                        ordered_count += 1
                 count += 1
-            output.write(f'PASS: {count} supported profile combinations; optional profiles checked in both orders.\n')
-        self.assertEqual(count, 96)
+            output.write(f'PASS: {count} supported profile combinations; {ordered_count} ordered validations '
+                         f'and {ordered_count} merged-configuration assertions.\n')
+        self.assertEqual(count, 192)
+        self.assertEqual(ordered_count, 375)
         print(f'PASS: {count} profile combinations; pipelines, receivers and extensions preserved.', flush=True)
 
     def test_missing_metrics_key_fails_closed(self):

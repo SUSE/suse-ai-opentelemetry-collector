@@ -6,7 +6,7 @@ COPY ./builder-config.yaml builder-config.yaml
 COPY ./topologyexporter ./topologyexporter
 
 RUN --mount=type=cache,target=/root/.cache/go-build \
-    GO111MODULE=on go install go.opentelemetry.io/collector/cmd/builder@v0.164.0
+    GO111MODULE=on go install go.opentelemetry.io/collector/cmd/builder@v0.165.0
 
 # Keep reviewed dependency fixes from go.mod/go.sum when generating the distribution.
 COPY ./suse-ai-opentelemetry-collector/go.mod ./suse-ai-opentelemetry-collector/go.sum ./suse-ai-opentelemetry-collector/
@@ -28,6 +28,7 @@ COPY ./litellm-receiver-no-auth.yaml /otelcol/litellm-receiver-no-auth.yaml
 COPY ./milvus.yaml /otelcol/milvus.yaml
 COPY ./qdrant.yaml /otelcol/qdrant.yaml
 COPY ./opensearch.yaml /otelcol/opensearch.yaml
+COPY ./kubeflow.yaml /otelcol/kubeflow.yaml
 COPY ./examples/ollama-runtime.yaml /otelcol/ollama-runtime.yaml
 COPY ./examples/workload-probes.yaml /otelcol/workload-probes.yaml
 
@@ -39,6 +40,7 @@ COPY --chmod=755 --from=build-stage /build/suse-ai-opentelemetry-collector/suse-
 ARG API_KEY=validation
 ARG ELASTICSEARCH_PASSWORD=validation
 ARG K8S_CLUSTER_NAME=validation
+ARG KUBEFLOW_METRICS_TOKEN_FILE=/etc/litellm-metrics/key
 RUN --mount=type=bind,source=tests/fixtures/litellm-metrics-key,target=/etc/litellm-metrics/key \
     ["/otelcol/otelcol-custom", "validate", "--config=/otelcol/collector-config.yaml", "--config=/otelcol/litellm-receiver.yaml"]
 RUN ["/otelcol/otelcol-custom", "validate", "--config=/otelcol/collector-config.yaml", "--config=/otelcol/litellm-receiver-no-auth.yaml"]
@@ -48,7 +50,9 @@ RUN ["/otelcol/otelcol-custom", "validate", "--config=/otelcol/collector-config.
 RUN ["/otelcol/otelcol-custom", "validate", "--config=/otelcol/collector-config.yaml", "--config=/otelcol/qdrant.yaml"]
 RUN ["/otelcol/otelcol-custom", "validate", "--config=/otelcol/collector-config.yaml", "--config=/otelcol/opensearch.yaml"]
 RUN --mount=type=bind,source=tests/fixtures/litellm-metrics-key,target=/etc/litellm-metrics/key \
-    ["/otelcol/otelcol-custom", "validate", "--config=/otelcol/collector-config.yaml", "--config=/otelcol/litellm-receiver.yaml", "--config=/otelcol/ollama-runtime.yaml", "--config=/otelcol/workload-probes.yaml", "--config=/otelcol/milvus.yaml", "--config=/otelcol/qdrant.yaml", "--config=/otelcol/opensearch.yaml"]
+    ["/otelcol/otelcol-custom", "validate", "--config=/otelcol/collector-config.yaml", "--config=/otelcol/kubeflow.yaml"]
+RUN --mount=type=bind,source=tests/fixtures/litellm-metrics-key,target=/etc/litellm-metrics/key \
+    ["/otelcol/otelcol-custom", "validate", "--config=/otelcol/collector-config.yaml", "--config=/otelcol/litellm-receiver.yaml", "--config=/otelcol/ollama-runtime.yaml", "--config=/otelcol/workload-probes.yaml", "--config=/otelcol/milvus.yaml", "--config=/otelcol/qdrant.yaml", "--config=/otelcol/opensearch.yaml", "--config=/otelcol/kubeflow.yaml"]
 
 ENTRYPOINT ["/otelcol/otelcol-custom"]
 CMD ["--config", "/otelcol/collector-config.yaml"]

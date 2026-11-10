@@ -1,0 +1,70 @@
+SUSE AI OpenTelemetry Collector 0.165.0 — Kubeflow scrape profile
+
+Updates the distribution and builder to upstream 0.165.0, from PR #40 revision
+cb3a0ec used by the demo. The component manifest follows the upstream Kubernetes
+distribution, including its new queuebatch processor, with the Elasticsearch
+receiver and optional legacy topology exporter retained. Go remains 1.26.10.
+The default pipelines retain the database identity fixes from 0.164.1.
+
+Kubeflow and KServe
+
+- The image now bundles /otelcol/kubeflow.yaml. Load it after the base
+  configuration to scrape Pipelines API, Workflow Controller, KServe Controller
+  and KServe model pods. It uses the demo's selectors, ports, 30-second scrape
+  interval and 10-second timeout in its own receiver and metrics pipeline.
+- Defaults are KUBEFLOW_NAMESPACE=kubeflow and
+  KSERVE_NAMESPACE=kubeflow-user-example-com. Each target retains its actual
+  namespace, pod UID, pod/node name, cluster and logical service/product identity.
+  Native metric names and histogram buckets are preserved.
+- Keep the base metadata RBAC and grant get/list/watch on Pods in both discovery
+  namespaces. The Collector ServiceAccount also needs GET on the non-resource
+  URL /metrics, granted by a ClusterRole and ClusterRoleBinding, for protected
+  Workflow Controller and KServe Controller scrapes.
+- Both HTTPS jobs read the projected ServiceAccount token. It must be readable
+  by UID 10001; KUBEFLOW_METRICS_TOKEN_FILE overrides its path. Missing token files
+  fail validation. No validation token is included in the image.
+- The default controller TLS behavior matches the demo's self-signed endpoints:
+  certificate verification is disabled. For verified TLS, mount a trusted CA,
+  set KUBEFLOW_METRICS_CA_FILE and KUBEFLOW_METRICS_INSECURE_SKIP_VERIFY=false,
+  and use certificates valid for the discovered pod IPs.
+- When migrating from the demo overlay, replace its --config argument with
+  /otelcol/kubeflow.yaml and remove its obsolete mount. Preserve other profiles,
+  namespace/environment settings, credentials, TLS mounts and deployment settings.
+  Do not load both the old overlay and the bundled profile.
+
+See knowledge/kubeflow.md for RBAC manifests and configuration details.
+
+Bundled configurations
+
+The image contains nine YAML files: collector-config.yaml, milvus.yaml,
+qdrant.yaml, opensearch.yaml, kubeflow.yaml, litellm-receiver.yaml,
+litellm-receiver-no-auth.yaml, ollama-runtime.yaml and workload-probes.yaml.
+Load the base first and at most one LiteLLM mode. All 192 supported profile
+subsets are covered by composition tests, including both optional-profile orders
+where distinct (375 validate calls and 375 merged-configuration assertions per
+architecture).
+
+Validation status
+
+Both linux/amd64 and linux/arm64 images built successfully and passed nine
+in-image configuration validations each as UID 10001. Their executables report
+0.165.0 and Go 1.26.10; all nine bundled YAML files match the committed source.
+No validation credentials or build-only environment values remain in the images.
+
+All 76 packaged integration tests passed (38 per architecture), covering
+Collector telemetry, database identity, Kubeflow/KServe, workload discovery,
+real LiteLLM authentication and all 192 supported profile subsets. Each
+architecture passed 375 ordered validations and 375 merged-config assertions.
+Arm64 tests ran under QEMU. Exporter race tests in both dependency graphs,
+go vet, ShellCheck, actionlint and whitespace checks passed.
+
+The demo environment is currently offline. Live configuration comparison,
+deployment and backend topology verification remain pending its recovery.
+See knowledge/validation-0.165.0-2026-11-10.md for evidence and release steps.
+
+Images
+
+After merge, the release workflow publishes
+ghcr.io/suse/suse-ai-opentelemetry-collector:0.165.0 for linux/amd64 and linux/arm64.
+SUSE Registry promotion follows the separate image-mirror process, targeting
+registry.suse.com/ai/containers/suse/suse-ai-opentelemetry-collector:0.165.0.

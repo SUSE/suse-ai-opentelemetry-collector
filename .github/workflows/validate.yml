@@ -9,6 +9,7 @@ on:
       - 'milvus.yaml'
       - 'qdrant.yaml'
       - 'opensearch.yaml'
+      - 'kubeflow.yaml'
       - 'examples/**'
       - 'Containerfile'
       - 'suse-ai-opentelemetry-collector/**'
@@ -25,6 +26,7 @@ on:
       - 'milvus.yaml'
       - 'qdrant.yaml'
       - 'opensearch.yaml'
+      - 'kubeflow.yaml'
       - 'examples/**'
       - 'Containerfile'
       - 'suse-ai-opentelemetry-collector/**'
@@ -66,5 +68,6 @@ jobs:
         run: |
           python3 tests/test_collector.py --collector "$RUNNER_TEMP/otelcol-custom"
           python3 tests/test_profiles.py --collector "$RUNNER_TEMP/otelcol-custom"
+          python3 tests/test_kubeflow.py --collector "$RUNNER_TEMP/otelcol-custom"
           python3 tests/test_database_profiles.py --collector "$RUNNER_TEMP/otelcol-custom"
           python3 tests/test_workload_collection.py --collector "$RUNNER_TEMP/otelcol-custom"

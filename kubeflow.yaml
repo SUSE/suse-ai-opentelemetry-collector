@@ -1,0 +1,194 @@
+# Optional Kubeflow/KServe pod scrapes; load collector-config.yaml first.
+# Controller HTTPS defaults match the demo self-signed certificates.
+# See knowledge/kubeflow.md for RBAC, token mounting and verified TLS.
+receivers:
+  prometheus/kubeflow:
+    config:
+      scrape_configs:
+      - job_name: kubeflow-pipelines
+        scrape_interval: 30s
+        scrape_timeout: 10s
+        kubernetes_sd_configs:
+        - role: pod
+          namespaces:
+            names:
+            - ${env:KUBEFLOW_NAMESPACE:-kubeflow}
+        relabel_configs:
+        - source_labels:
+          - __meta_kubernetes_pod_label_app
+          action: keep
+          regex: ml-pipeline
+        - source_labels:
+          - __meta_kubernetes_pod_container_port_number
+          action: keep
+          regex: '8888'
+        - source_labels:
+          - __meta_kubernetes_pod_phase
+          action: keep
+          regex: Running
+        - target_label: service_name
+          replacement: kubeflow-pipelines
+        - target_label: suse_ai_product
+          replacement: kubeflow-pipelines
+        - source_labels:
+          - __meta_kubernetes_namespace
+          target_label: service_namespace
+        - source_labels:
+          - __meta_kubernetes_namespace
+          target_label: k8s_namespace_name
+        - source_labels:
+          - __meta_kubernetes_pod_uid
+          target_label: k8s_pod_uid
+        - source_labels:
+          - __meta_kubernetes_pod_name
+          target_label: k8s_pod_name
+        - source_labels:
+          - __meta_kubernetes_pod_node_name
+          target_label: k8s_node_name
+      - job_name: kubeflow-workflow-controller
+        scrape_interval: 30s
+        scrape_timeout: 10s
+        kubernetes_sd_configs:
+        - role: pod
+          namespaces:
+            names:
+            - ${env:KUBEFLOW_NAMESPACE:-kubeflow}
+        relabel_configs:
+        - source_labels:
+          - __meta_kubernetes_pod_label_app
+          action: keep
+          regex: workflow-controller
+        - source_labels:
+          - __meta_kubernetes_pod_container_port_number
+          action: keep
+          regex: '9090'
+        - source_labels:
+          - __meta_kubernetes_pod_phase
+          action: keep
+          regex: Running
+        - target_label: service_name
+          replacement: kubeflow-workflow-controller
+        - target_label: suse_ai_product
+          replacement: kubeflow-pipelines
+        - source_labels:
+          - __meta_kubernetes_namespace
+          target_label: service_namespace
+        - source_labels:
+          - __meta_kubernetes_namespace
+          target_label: k8s_namespace_name
+        - source_labels:
+          - __meta_kubernetes_pod_uid
+          target_label: k8s_pod_uid
+        - source_labels:
+          - __meta_kubernetes_pod_name
+          target_label: k8s_pod_name
+        - source_labels:
+          - __meta_kubernetes_pod_node_name
+          target_label: k8s_node_name
+        scheme: https
+        tls_config:
+          insecure_skip_verify: ${env:KUBEFLOW_METRICS_INSECURE_SKIP_VERIFY:-true}
+          ca_file: ${env:KUBEFLOW_METRICS_CA_FILE:-}
+        authorization:
+          credentials_file: ${env:KUBEFLOW_METRICS_TOKEN_FILE:-/var/run/secrets/kubernetes.io/serviceaccount/token}
+      - job_name: kserve-controller
+        scrape_interval: 30s
+        scrape_timeout: 10s
+        kubernetes_sd_configs:
+        - role: pod
+          namespaces:
+            names:
+            - ${env:KUBEFLOW_NAMESPACE:-kubeflow}
+        relabel_configs:
+        - source_labels:
+          - __meta_kubernetes_pod_label_control_plane
+          action: keep
+          regex: kserve-controller-manager
+        - source_labels:
+          - __meta_kubernetes_pod_container_port_number
+          action: keep
+          regex: '8443'
+        - source_labels:
+          - __meta_kubernetes_pod_phase
+          action: keep
+          regex: Running
+        - target_label: service_name
+          replacement: kserve-controller
+        - target_label: suse_ai_product
+          replacement: kserve
+        - source_labels:
+          - __meta_kubernetes_namespace
+          target_label: service_namespace
+        - source_labels:
+          - __meta_kubernetes_namespace
+          target_label: k8s_namespace_name
+        - source_labels:
+          - __meta_kubernetes_pod_uid
+          target_label: k8s_pod_uid
+        - source_labels:
+          - __meta_kubernetes_pod_name
+          target_label: k8s_pod_name
+        - source_labels:
+          - __meta_kubernetes_pod_node_name
+          target_label: k8s_node_name
+        scheme: https
+        tls_config:
+          insecure_skip_verify: ${env:KUBEFLOW_METRICS_INSECURE_SKIP_VERIFY:-true}
+          ca_file: ${env:KUBEFLOW_METRICS_CA_FILE:-}
+        authorization:
+          credentials_file: ${env:KUBEFLOW_METRICS_TOKEN_FILE:-/var/run/secrets/kubernetes.io/serviceaccount/token}
+      - job_name: kserve-models
+        scrape_interval: 30s
+        scrape_timeout: 10s
+        kubernetes_sd_configs:
+        - role: pod
+          namespaces:
+            names:
+            - ${env:KSERVE_NAMESPACE:-kubeflow-user-example-com}
+        relabel_configs:
+        - source_labels:
+          - __meta_kubernetes_pod_label_serving_kserve_io_inferenceservice
+          action: keep
+          regex: .+
+        - source_labels:
+          - __meta_kubernetes_pod_container_port_number
+          action: keep
+          regex: '8080'
+        - source_labels:
+          - __meta_kubernetes_pod_phase
+          action: keep
+          regex: Running
+        - target_label: suse_ai_product
+          replacement: kserve
+        - source_labels:
+          - __meta_kubernetes_namespace
+          target_label: service_namespace
+        - source_labels:
+          - __meta_kubernetes_namespace
+          target_label: k8s_namespace_name
+        - source_labels:
+          - __meta_kubernetes_pod_uid
+          target_label: k8s_pod_uid
+        - source_labels:
+          - __meta_kubernetes_pod_name
+          target_label: k8s_pod_name
+        - source_labels:
+          - __meta_kubernetes_pod_node_name
+          target_label: k8s_node_name
+        - source_labels:
+          - __meta_kubernetes_pod_label_serving_kserve_io_inferenceservice
+          target_label: service_name
+service:
+  pipelines:
+    metrics/kubeflow:
+      receivers:
+      - prometheus/kubeflow
+      processors:
+      - memory_limiter
+      - transform/prometheus
+      - transform/kubernetes_identity
+      - resource
+      - transform/suse_ai_resource
+      - batch
+      exporters:
+      - otlp

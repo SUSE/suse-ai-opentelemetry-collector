@@ -333,6 +333,10 @@ python3 tests/test_kubeflow.py --collector /path/to/otelcol-custom
 python3 tests/test_litellm_auth.py --collector /path/to/otelcol-custom
 ```
 
+For emulated architecture checks, add `--validation-workers 4` to
+`test_profiles.py` to run independent configuration checks concurrently.
+The default is one worker; every configuration assertion runs in either mode.
+
 The last command requires Docker and pull access to the pinned SUSE LiteLLM
 1.81.13 image. It starts real proxies with authentication on/off, checks rejected
 anonymous/wrong-key requests, and verifies exported metrics with/without a key

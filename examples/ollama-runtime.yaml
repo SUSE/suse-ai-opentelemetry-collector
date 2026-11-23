@@ -58,4 +58,4 @@ service:
     metrics/ollama_runtime:
       receivers: [prometheus/ollama_runtime]
       processors: [memory_limiter, transform/ollama_runtime_identity, resource/ollama_runtime, transform/suse_ai_resource, batch]
-      exporters: [otlp]
+      exporters: [forward/metrics]

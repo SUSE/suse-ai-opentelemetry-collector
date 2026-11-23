@@ -66,4 +66,4 @@ service:
     metrics/litellm:
       receivers: [prometheus/litellm]
       processors: [memory_limiter, transform/litellm_identity, resource/litellm, transform/suse_ai_resource, transform/genai-normalize, batch]
-      exporters: [otlp]
+      exporters: [forward/metrics]

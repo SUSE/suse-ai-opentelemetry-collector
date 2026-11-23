@@ -122,8 +122,8 @@ The default configuration is for a Kubernetes gateway. Supply the deployment var
 | `API_KEY` | Required SUSE Observability API key; sent in the OTLP authorization header |
 | `K8S_CLUSTER_NAME` | `local`; set this to the actual cluster name |
 | `SUSE_AI_NAMESPACE` | `suse-private-ai`; application discovery and explicitly configured product namespace |
-| `OTLP_ENDPOINT` | `suse-observability-otel-collector.suse-observability.svc.cluster.local:4317` |
-| `OTLP_INSECURE` | `true` for the default in-cluster plaintext gRPC endpoint; use `false` for TLS |
+| `OTLP_ENDPOINT` | Defaults to `suse-observability-otel-collector.suse-observability.svc.cluster.local:4317` for gRPC. The HTTP profile requires an HTTPS base URL. |
+| `OTLP_INSECURE` | gRPC only. Defaults to `true` for the in-cluster plaintext endpoint. Set to `false` for gRPC with TLS. |
 | `VLLM_METRICS_PORT` | `8000`; discovered vLLM service port |
 | `GPU_NAMESPACE` / `GPU_METRICS_PORT` | `gpu-operator` / `9400`; DCGM exporter discovery |
 
@@ -132,6 +132,33 @@ The Kubernetes service account needs read access (`get`, `list`, `watch`) to pod
 Milvus, Qdrant and OpenSearch inputs are disabled in the base; enable their bundled profiles only when deployed (see below). vLLM and DCGM use Kubernetes endpoint discovery and have no scrape targets when their matching Services are absent. Discovery still requires a reachable Kubernetes API and the RBAC permissions above. To use another OTLP backend, configure its endpoint, TLS, and authorization headers in the exporter. Configure the receiving SUSE Observability OTel collector to supply resource topology to `sts_topo_opentelemetry_collector`; the SUSE AI collector sends OTLP and does not publish directly to Kafka. Verify the integration with `sts topology-sync list` and `sts topology-sync describe` against that backend.
 
 The collector exposes OTLP on **4317** (gRPC) and **4318** (HTTP), Jaeger on **14250** (gRPC) and **14268** (Thrift HTTP), and a health endpoint on **13133**.
+
+### Export over OTLP/HTTP
+
+gRPC is the default. To switch an existing base + Milvus deployment to HTTP,
+append the bundled profile to `command.extraArgs` and set or update `OTLP_ENDPOINT`
+in `extraEnvs`. Keep your existing `API_KEY` Secret reference and other list entries.
+
+```diff
+ command:
+   extraArgs:
+     - --config=/otelcol/collector-config.yaml
+     - --config=/otelcol/milvus.yaml
++    - --config=/otelcol/otlp-http.yaml
+ extraEnvs:
+   - name: API_KEY
+     valueFrom:
+       secretKeyRef:
+         name: suse-observability-credentials
+         key: api-key
++  - name: OTLP_ENDPOINT
++    value: https://otlp.example.com
+```
+
+`https://otlp.example.com:443` also works. The exporter verifies the server
+certificate, sends protobuf with the existing `SUSEObservability` authorization
+header, and appends `/v1/traces`, `/v1/metrics`, or `/v1/logs` to the base URL
+for every enabled profile.
 
 ## Telemetry behavior
 

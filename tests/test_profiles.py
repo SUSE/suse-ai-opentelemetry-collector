@@ -82,14 +82,26 @@ class ProfileIntegration(unittest.TestCase):
             cls.directory = Path(cls.temp.name)
         cls.env = dict(os.environ, API_KEY='test-key', ELASTICSEARCH_PASSWORD='test-password',
                        K8S_CLUSTER_NAME='test-cluster', SUSE_AI_NAMESPACE='ai-test',
-                       GPU_NAMESPACE='gpu-test', OTEL_RESOURCE_ATTRIBUTES='',
+                       GPU_NAMESPACE='gpu-test', OTEL_RESOURCE_ATTRIBUTES='', OTLP_INSECURE='true',
                        KUBEFLOW_METRICS_TOKEN_FILE=str(ROOT / 'tests/fixtures/litellm-metrics-key'),
                        LITELLM_METRICS_KEY_FILE=str(ROOT / 'tests/fixtures/litellm-metrics-key'))
+        cls.env.pop('OTLP_ENDPOINT', None)
         cls.base = yaml.safe_load((ROOT / 'collector-config.yaml').read_text())
 
     def command(self, action, profiles):
         args = [OPTIONS.collector, action, '--config=' + str(ROOT / 'collector-config.yaml')]
         return args + ['--config=' + str(ROOT / p) for p in profiles]
+
+    def assert_export_routes(self, pipelines, exporter):
+        self.assertEqual(pipelines['metrics/export']['receivers'], ['forward/metrics'])
+        for name, pipeline in pipelines.items():
+            if name == 'traces':
+                expected = [exporter, 'span_metrics', 'service_graph/suse_ai', 'count/suse_ai_clients']
+            elif name.startswith('metrics') and name != 'metrics/export':
+                expected = ['forward/metrics']
+            else:
+                expected = [exporter]
+            self.assertEqual(pipeline['exporters'], expected, name)
 
     def test_all_supported_combinations(self):
         combinations = []
@@ -136,6 +148,7 @@ class ProfileIntegration(unittest.TestCase):
                         result = merged_result
                         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                         merged = yaml.safe_load(result.stdout)
+                        self.assert_export_routes(merged['service']['pipelines'], 'otlp')
                         self.assertEqual(set(merged['service']['pipelines']), expected_pipelines)
                         self.assertEqual(set(merged['service']['extensions']), expected_extensions)
                         self.assertEqual(set(merged['receivers']), expected_receivers)
@@ -170,6 +183,41 @@ class ProfileIntegration(unittest.TestCase):
         self.assertEqual(count, 192)
         self.assertEqual(ordered_count, 375)
         print(f'PASS: {count} profile combinations; pipelines, receivers and extensions preserved.', flush=True)
+
+    def test_otlp_http_changes_only_export(self):
+        def resolved(profiles, env, transport):
+            # print-config validates the merged configuration. Use the fixture key to check the header.
+            result = subprocess.run(self.command('print-config', profiles) + ['--mode=unredacted'],
+                                    env=env, capture_output=True, text=True, timeout=30)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            config = yaml.safe_load(result.stdout)
+            pipelines = config['service']['pipelines']
+            self.assert_export_routes(pipelines, transport)
+            for pipeline in pipelines.values():
+                del pipeline['exporters']
+            exporter = config.pop('exporters')[transport]
+            return config, exporter
+
+        litellm_profiles = LITELLM_MODES[1:]
+        bundles = [()] + [(profile,) for profile in (*PROFILES, *litellm_profiles)]
+        bundles.extend((*PROFILES, mode) for mode in litellm_profiles)
+        for profiles in bundles:
+            expected, _ = resolved(profiles, self.env, 'otlp')
+            for endpoint in ('https://otlp.example.com', 'https://otlp.example.com:443'):
+                with self.subTest(profiles=profiles, endpoint=endpoint):
+                    env = dict(self.env, OTLP_ENDPOINT=endpoint)
+                    actual, exporter = resolved((*profiles, 'otlp-http.yaml'), env, 'otlp_http')
+                    # Also checks that HTTP alone adds no product pipelines, receivers or peer hooks.
+                    self.assertEqual(actual, expected)
+                    self.assertEqual(exporter['endpoint'], endpoint)
+                    self.assertEqual(exporter['encoding'], 'proto')
+                    self.assertEqual(exporter['headers'], [
+                        {'name': 'Authorization', 'value': 'SUSEObservability ' + self.env['API_KEY']}])
+                    tls = exporter.get('tls', {})
+                    self.assertFalse(tls.get('insecure'))
+                    self.assertFalse(tls.get('insecure_skip_verify'))
+                    for signal in ('traces', 'metrics', 'logs'):
+                        self.assertFalse(exporter[signal + '_endpoint'])
 
     def test_missing_metrics_key_fails_closed(self):
         env = dict(self.env, LITELLM_METRICS_KEY_FILE=str(self.directory / 'not-mounted'))

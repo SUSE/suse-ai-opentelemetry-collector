@@ -106,4 +106,4 @@ service:
     metrics/workload_probes:
       receivers: [receiver_creator/ai_workload_probes]
       processors: [memory_limiter, k8s_attributes, transform/suse_ai_resource, batch]
-      exporters: [otlp]
+      exporters: [forward/metrics]

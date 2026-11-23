@@ -23,6 +23,7 @@ ARG USER_UID=10001
 USER ${USER_UID}
 
 COPY ./collector-config.yaml /otelcol/collector-config.yaml
+COPY ./otlp-http.yaml /otelcol/otlp-http.yaml
 COPY ./litellm-receiver.yaml /otelcol/litellm-receiver.yaml
 COPY ./litellm-receiver-no-auth.yaml /otelcol/litellm-receiver-no-auth.yaml
 COPY ./milvus.yaml /otelcol/milvus.yaml
@@ -53,6 +54,8 @@ RUN --mount=type=bind,source=tests/fixtures/litellm-metrics-key,target=/etc/lite
     ["/otelcol/otelcol-custom", "validate", "--config=/otelcol/collector-config.yaml", "--config=/otelcol/kubeflow.yaml"]
 RUN --mount=type=bind,source=tests/fixtures/litellm-metrics-key,target=/etc/litellm-metrics/key \
     ["/otelcol/otelcol-custom", "validate", "--config=/otelcol/collector-config.yaml", "--config=/otelcol/litellm-receiver.yaml", "--config=/otelcol/ollama-runtime.yaml", "--config=/otelcol/workload-probes.yaml", "--config=/otelcol/milvus.yaml", "--config=/otelcol/qdrant.yaml", "--config=/otelcol/opensearch.yaml", "--config=/otelcol/kubeflow.yaml"]
+ARG OTLP_ENDPOINT=https://otlp.example.com
+RUN ["/otelcol/otelcol-custom", "validate", "--config=/otelcol/collector-config.yaml", "--config=/otelcol/milvus.yaml", "--config=/otelcol/otlp-http.yaml"]
 
 ENTRYPOINT ["/otelcol/otelcol-custom"]
 CMD ["--config", "/otelcol/collector-config.yaml"]

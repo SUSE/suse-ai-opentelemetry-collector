@@ -171,6 +171,8 @@ class CollectorIntegration(IdentityCases, unittest.TestCase):
         config['connectors']['span_metrics']['metrics_flush_interval'] = '1s'
         config["exporters"] = {}
         cls.outputs = {}
+        # Capture each metrics pipeline before the shared export step.
+        del config["service"]["pipelines"]["metrics/export"]
         for name, pipeline in config["service"]["pipelines"].items():
             pipeline["receivers"] = [r for r in pipeline["receivers"] if r != "jaeger"]
             if name == "metrics/elasticsearch":
@@ -179,7 +181,10 @@ class CollectorIntegration(IdentityCases, unittest.TestCase):
             path = cls.directory / (name.replace("/", "_") + ".jsonl")
             cls.outputs[name] = path
             config["exporters"][destination] = {"path": str(path), "format": "json", "flush_interval": "100ms"}
-            pipeline["exporters"] = [destination if e == "otlp" else e for e in pipeline["exporters"]]
+            pipeline["exporters"] = [
+                destination if exporter in ("otlp", "forward/metrics") else exporter
+                for exporter in pipeline["exporters"]
+            ]
         config_path = cls.directory / "config.yaml"
         config_path.write_text(yaml.safe_dump(config, sort_keys=False))
         cls.log_path = cls.directory / "collector.log"

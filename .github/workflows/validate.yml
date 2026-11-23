@@ -5,6 +5,7 @@ on:
     paths:
       - 'builder-config.yaml'
       - 'collector-config.yaml'
+      - 'otlp-http.yaml'
       - 'litellm-receiver*.yaml'
       - 'milvus.yaml'
       - 'qdrant.yaml'
@@ -22,6 +23,7 @@ on:
     paths:
       - 'builder-config.yaml'
       - 'collector-config.yaml'
+      - 'otlp-http.yaml'
       - 'litellm-receiver*.yaml'
       - 'milvus.yaml'
       - 'qdrant.yaml'

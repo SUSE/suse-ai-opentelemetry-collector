@@ -346,6 +346,8 @@ connectors:
       max_items: 10000
     virtual_node_peer_attributes: []
     virtual_node_extra_label: true
+  # All bundled metrics pipelines forward here after their own processors run.
+  forward/metrics: {}
   span_metrics:
     metrics_expiration: 5m
     metrics_flush_interval: 15s
@@ -389,7 +391,7 @@ service:
     metrics/suse_ai_observations:
       receivers: [service_graph/suse_ai, count/suse_ai_clients]
       processors: [memory_limiter, filter/suse_ai_observations, cumulativetodelta/suse_ai_calls, filter/suse_ai_idle_calls, transform/suse_ai_observations, batch]
-      exporters: [otlp]
+      exporters: [forward/metrics]
     metrics:
       receivers:
       - otlp
@@ -404,7 +406,7 @@ service:
       - transform/genai-normalize
       - batch
       exporters:
-      - otlp
+      - forward/metrics
     metrics/prometheus:
       receivers:
       - prometheus
@@ -417,7 +419,11 @@ service:
       - transform/genai-normalize
       - batch
       exporters:
-      - otlp
+      - forward/metrics
+    metrics/export:
+      receivers: [forward/metrics]
+      processors: []
+      exporters: [otlp]
     logs:
       receivers:
       - otlp

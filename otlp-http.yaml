@@ -1,0 +1,21 @@
+# Load alongside the base and any product profiles to export over HTTPS.
+exporters:
+  otlp_http:
+    endpoint: ${env:OTLP_ENDPOINT}
+    encoding: proto
+    tls:
+      insecure_skip_verify: false
+    headers:
+      Authorization: SUSEObservability ${env:API_KEY}
+  otlp:
+    # Even inactive gRPC exporters must validate with an explicit host and port.
+    endpoint: localhost:4317
+
+service:
+  pipelines:
+    traces:
+      exporters: [otlp_http, span_metrics, service_graph/suse_ai, count/suse_ai_clients]
+    metrics/export:
+      exporters: [otlp_http]
+    logs:
+      exporters: [otlp_http]

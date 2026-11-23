@@ -80,4 +80,4 @@ service:
       - transform/genai-normalize
       - batch
       exporters:
-      - otlp
+      - forward/metrics
